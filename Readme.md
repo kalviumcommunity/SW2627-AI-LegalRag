@@ -1,4 +1,4 @@
-# Property Intelligence Platform — Phases 1–3 (Sprint 2)
+# Property Intelligence Platform — Phases 1–4 (Sprint 2)
 
 AI-powered Real Estate Property Intelligence Platform. Buyers currently cannot get
 trustworthy, consolidated answers about a property without manually cross-checking
@@ -13,15 +13,22 @@ endpoints, and a general (non-RAG) LLM chat endpoint backed by Groq. Chat answer
 page-aware text extraction, conservative cleaning, configurable overlapping chunking,
 and traceable chunk metadata exposed through `POST /api/v1/documents/ingest`.
 
-**Phase 3 (this implementation):** configurable embedding generation plus durable
-PostgreSQL/pgvector storage. Chunks produced by Phase 2 are embedded and committed with
-their document, text, ordering, page references, offsets, metadata, and vectors. A
-successful ingestion response is returned only after the database transaction commits.
-Identical re-uploads are idempotent and return the previously stored document.
+**Phase 3:** configurable embedding generation plus durable PostgreSQL/pgvector
+storage. Chunks produced by Phase 2 are embedded and committed with their document,
+text, ordering, page references, offsets, metadata, and vectors. A successful ingestion
+response is returned only after the database transaction commits. Identical re-uploads
+are idempotent and return the previously stored document.
 
-Phase 3 explicitly does **not** implement semantic search, top-k retrieval, metadata
-filtering, hybrid retrieval, reranking, RAG answer generation, citations, a frontend,
-OCR, or deployment. Those belong to later phases.
+**Phase 4 (this implementation):** semantic retrieval of stored chunks by natural-
+language query, configurable top-K, metadata-filtered search, optional cosine-
+similarity thresholds, and hybrid semantic + PostgreSQL full-text retrieval fused with
+reciprocal rank fusion (RRF). `POST /api/v1/retrieval/search` returns ranked chunks
+with source metadata for future citations. A reproducible synthetic evaluation corpus
+and Hit@K / Recall@K / Precision@K / MRR metrics are included.
+
+Phase 4 does **not** generate answers from retrieved chunks, build RAG context,
+format citations, add conversational memory, stream responses, add a chat UI, run OCR,
+rerank results, or deploy the application. Those belong to later phases.
 
 ## Repository layout
 
@@ -35,22 +42,25 @@ OCR, or deployment. Those belong to later phases.
     │   ├── env.py
     │   ├── script.py.mako
     │   └── versions/
-    │       └── 0001_create_documents_and_chunks.py
+    │       ├── 0001_create_documents_and_chunks.py
+    │       └── 0002_add_retrieval_indexes.py   # GIN full-text index
     ├── app/
     │   ├── main.py                    # FastAPI entry point (create_app factory + app)
     │   ├── api/routes/
     │   │   ├── health.py              # GET /health, GET /ready
     │   │   ├── llm.py                 # POST /llm/chat
-    │   │   └── documents.py           # POST /documents/ingest
+    │   │   ├── documents.py           # POST /documents/ingest
+    │   │   └── retrieval.py           # POST /retrieval/search
     │   ├── core/
-    │   │   ├── config.py              # Pydantic Settings (LLM, ingestion, Phase 3)
+    │   │   ├── config.py              # Pydantic Settings (LLM, ingestion, retrieval)
     │   │   └── prompt.py              # Phase 1 system prompt
     │   ├── db/
     │   │   ├── base.py                # SQLAlchemy declarative base
-    │   │   └── models.py              # documents / chunks / pgvector models
+    │   │   └── models.py              # documents / chunks / pgvector / FTS indexes
     │   ├── schemas/
     │   │   ├── llm.py                 # ChatRequest / ChatResponse
-    │   │   └── documents.py           # DocumentChunk / IngestResponse
+    │   │   ├── documents.py           # DocumentChunk / IngestResponse
+    │   │   └── retrieval.py           # retrieval request/response/filter schemas
     │   └── services/
     │       ├── llm_service.py         # Groq (OpenAI-compatible) wrapper
     │       ├── document_validation.py # filename/MIME/signature/size checks
@@ -62,10 +72,19 @@ OCR, or deployment. Those belong to later phases.
     │       ├── storage_errors.py      # safe database/storage error types
     │       ├── embedding_service.py   # providers, batching, validation, normalization
     │       ├── document_store.py      # transactional PostgreSQL/pgvector storage
-    │       └── document_ingestion.py  # pipeline orchestration
+    │       ├── document_ingestion.py  # pipeline orchestration
+    │       ├── retrieval_errors.py    # safe retrieval error types
+    │       ├── retrieval_store.py     # pgvector cosine + PostgreSQL full-text SQL
+    │       ├── retrieval_service.py   # validation, embedding, ranking, RRF fusion
+    │       └── retrieval_evaluation.py # Hit@K / Recall@K / Precision@K / MRR
+    ├── evaluation/
+    │   ├── retrieval_dataset.json     # synthetic grounded corpus + questions
+    │   └── dataset.py                 # load/validate/materialize evaluation corpus
+    ├── scripts/
+    │   └── evaluate_retrieval.py      # reproducible evaluation runner
     ├── tests/
     │   ├── conftest.py                # settings isolation + database fixtures
-    │   ├── fakes.py                   # mocked provider + in-memory store
+    │   ├── fakes.py                   # mocked providers + in-memory stores
     │   ├── pdf_factory.py             # synthetic PDF fixtures (no external services)
     │   ├── test_health.py
     │   ├── test_llm.py
@@ -73,7 +92,11 @@ OCR, or deployment. Those belong to later phases.
     │   ├── test_documents.py          # Phase 2 API regression tests
     │   ├── test_embeddings.py
     │   ├── test_persistence.py        # requires TEST_DATABASE_URL
-    │   └── test_ingestion_integration.py  # requires TEST_DATABASE_URL
+    │   ├── test_ingestion_integration.py  # requires TEST_DATABASE_URL
+    │   ├── test_retrieval_service.py
+    │   ├── test_retrieval_api.py
+    │   ├── test_retrieval_integration.py  # requires TEST_DATABASE_URL
+    │   └── test_retrieval_evaluation.py
     ├── requirements.txt
     ├── pytest.ini
     ├── .env.example                   # placeholder values only, never real secrets
@@ -126,8 +149,9 @@ Using a local PostgreSQL installation instead:
 
 ### Migrations
 
-Alembic creates `documents` and `chunks`, enables pgvector, and creates the HNSW
-cosine index. Set `DATABASE_URL` (directly or in `backend/.env`) and run from
+Alembic creates `documents` and `chunks`, enables pgvector, creates the HNSW cosine
+index (`vector_cosine_ops`), and adds a GIN index for English full-text search used by
+hybrid retrieval. Set `DATABASE_URL` (directly or in `backend/.env`) and run from
 `backend/`:
 
 ```bash
@@ -138,12 +162,13 @@ alembic current
 Useful commands:
 
 ```bash
-alembic downgrade base     # removes the Phase 3 tables (leaves the extension)
+alembic downgrade base     # removes the tables (leaves the pgvector extension)
 alembic history
+alembic check              # verifies the models and applied schema agree
 ```
 
 The application does **not** auto-run migrations at startup. If the schema is missing,
-ingestion returns HTTP `503` with a safe message asking you to run
+ingestion or retrieval returns HTTP `503` with a safe message asking you to run
 `alembic upgrade head`.
 
 ## Configuration
@@ -182,6 +207,11 @@ Copy `backend/.env.example` to `backend/.env` and set values:
 | `EMBEDDING_API_KEY` | _(none)_ | Required only for `EMBEDDING_PROVIDER=openai` |
 | `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible embeddings endpoint |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Remote embedding request timeout (no auto-retries) |
+| `RETRIEVAL_DEFAULT_TOP_K` | `5` | Top-K used when a search request omits `top_k` |
+| `RETRIEVAL_MAX_TOP_K` | `50` | Maximum accepted `top_k` |
+| `RETRIEVAL_MAX_QUERY_CHARS` | `2000` | Maximum normalized query length |
+| `RETRIEVAL_HYBRID_CANDIDATE_LIMIT` | `50` | Candidate pool per retriever before RRF fusion |
+| `RETRIEVAL_RRF_K` | `60` | RRF rank-smoothing constant |
 
 Secrets are never hardcoded, never logged, and `.env` files are git-ignored.
 
@@ -296,13 +326,175 @@ Endpoints (all under `API_PREFIX`, default `/api/v1`):
 
 - `GET /api/v1/health` → liveness only; never calls the LLM, embedding provider, or DB.
 - `GET /api/v1/ready` → configuration flags for the LLM, embedding provider/model/
-  dimensions, and database. No paid calls or model downloads.
+  dimensions, database, and retrieval defaults. No paid calls or model downloads.
 - `POST /api/v1/llm/chat` with `{"message": "..."}` → `{"answer": "..."}`.
   Empty/whitespace messages → 422; over-length → 422; missing API key → 503;
   rate limit → 429; timeout → 504; auth/upstream failure → 502.
   Error responses contain safe messages only (no stack traces, no secrets).
 - `POST /api/v1/documents/ingest` → validate, extract, clean, chunk, embed, and persist
   a document (Phases 2–3; response below).
+- `POST /api/v1/retrieval/search` → semantic or hybrid ranked chunk retrieval with
+  optional metadata filters (Phase 4; details below).
+
+## Retrieval (Phase 4)
+
+### Behavior
+
+- The query is trimmed and internal whitespace is collapsed; empty queries and queries
+  longer than `RETRIEVAL_MAX_QUERY_CHARS` are rejected with HTTP 422.
+- `semantic` mode embeds the query with the configured embedding provider and orders
+  chunks by pgvector cosine distance (`<=>`), using the existing HNSW index. Returned
+  `score` is cosine similarity (`1 - distance`), where higher is better.
+- `hybrid` mode combines semantic candidates with PostgreSQL English full-text search
+  (`to_tsvector` / `plainto_tsquery` / `ts_rank_cd`) using reciprocal rank fusion:
+  `score = Σ 1 / (RETRIEVAL_RRF_K + rank)`, with one-based ranks. Hybrid `score` is an
+  RRF score and is **not** comparable to cosine similarity.
+- Ties are deterministic: score first, then semantic/keyword rank, then chunk ID.
+- `top_k` defaults to `RETRIEVAL_DEFAULT_TOP_K` and is capped by
+  `RETRIEVAL_MAX_TOP_K`.
+- `min_score` is an optional cosine-similarity threshold in `[-1, 1]`. In hybrid mode it
+  filters semantic candidates before fusion; keyword-only matches are not thresholded
+  because their relevance scale is different.
+- All filters are applied in SQL before ranking: `document_id`, exact
+  `filters.source_filename`, `filters.source_type` (`pdf`/`txt`/`markdown`), and
+  `filters.page_number`. Page filtering also matches multi-page chunks through
+  `metadata.page_numbers`.
+- Each result returns the chunk text plus source metadata needed by a future citation
+  step: `filename`, `source_type`, `page_number`, `page_numbers`, `chunk_index`, offsets,
+  and full Phase 2 `chunk_metadata`.
+- No LLM call is made by retrieval, and query/chunk text is not written to logs.
+
+### Request example
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/retrieval/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What legal documents are available for this property?",
+    "top_k": 5,
+    "mode": "hybrid",
+    "filters": {"source_type": "pdf", "page_number": 1},
+    "min_score": 0.2
+  }'
+```
+
+```python
+import httpx
+
+response = httpx.post(
+    "http://127.0.0.1:8000/api/v1/retrieval/search",
+    json={
+        "query": "What legal documents are available for this property?",
+        "top_k": 5,
+        "mode": "semantic",
+    },
+    timeout=60,
+)
+print(response.status_code, response.json())
+```
+
+### Response example
+
+```json
+{
+  "query": "What legal documents are available for this property?",
+  "mode": "semantic",
+  "results": [
+    {
+      "chunk_id": "chk_9a02…",
+      "document_id": "doc_4f1c…",
+      "text": "ENCUMBRANCE CERTIFICATE…",
+      "score": 0.6744,
+      "score_type": "cosine_similarity",
+      "distance": 0.3256,
+      "semantic_score": 0.6744,
+      "keyword_rank": null,
+      "metadata": {
+        "filename": "encumbrance_certificate.txt",
+        "source_type": "txt",
+        "page_number": null,
+        "page_numbers": [],
+        "chunk_index": 0,
+        "start_offset": 0,
+        "end_offset": 812,
+        "chunk_metadata": {
+          "character_count": 812,
+          "chunking": {
+            "strategy": "character",
+            "chunk_size_chars": 3200,
+            "overlap_chars": 480
+          },
+          "warnings": []
+        }
+      }
+    }
+  ],
+  "result_count": 1
+}
+```
+
+An empty result set is a successful HTTP 200 with `results: []` and
+`result_count: 0`; it does not mean the query was malformed.
+
+### Retrieval errors
+
+| Condition | HTTP status |
+|---|---|
+| Blank/whitespace-only query, `top_k` out of range, invalid mode/score/filter | `422` |
+| `DATABASE_URL` missing, missing migrations, incompatible vector dimension | `503` |
+| Embedding provider rate limit | `429` |
+| Embedding provider unavailable or malformed response | `502` |
+| Embedding provider timeout | `504` |
+| Database unavailable or retrieval query failure | `503` / `500` with a safe message |
+
+Error responses never include stack traces, credentials, SQL, query text, or chunk text.
+
+### Evaluation
+
+`backend/evaluation/retrieval_dataset.json` defines a small synthetic property corpus
+(sale deed, encumbrance certificate, property details, locality report, cost breakdown,
+and a two-page title-chain PDF) and ten grounded questions: eight answerable and two
+with no supporting evidence. Expected chunk IDs are resolved from marker phrases at
+evaluation time rather than hardcoded.
+
+The runner ingests the corpus with the real configured embedding provider and reports
+Hit@K, Recall@K, Precision@K, and MRR for four configurations: semantic, filtered
+semantic, hybrid, and filtered hybrid. No-answer questions count as zero for those
+metrics. Precision uses the number of unique results actually returned.
+
+From `backend/`, against a **dedicated** evaluation database (the script can truncate
+tables with `--reset`):
+
+```bash
+export DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
+python scripts/evaluate_retrieval.py --reset --k 3 --output evaluation/last_run.json
+```
+
+Verified results with the default local fastembed model at `K=3` (6 chunks ingested):
+
+| Configuration | Hit@3 | Recall@3 | Precision@3 | MRR | Mean total |
+|---|---:|---:|---:|---:|---:|
+| semantic | 0.800 | 0.800 | 0.367 | 0.800 | 64.3 ms |
+| semantic + filters | 0.800 | 0.800 | 0.433 | 0.800 | 62.7 ms |
+| hybrid | 0.800 | 0.800 | 0.367 | 0.800 | 68.6 ms |
+| hybrid + filters | 0.800 | 0.800 | 0.433 | 0.800 | 68.6 ms |
+
+`K=3` was chosen because the corpus has only six chunks; `K=5` would return nearly the
+entire corpus and make Hit@K/Recall@K trivially high. Timings are from one local run
+and are hardware-dependent, not benchmarks.
+
+All eight answerable questions were ranked first in every configuration. Both
+no-evidence questions scored zero because the metric intentionally treats unsupported
+queries as misses. The corpus is intentionally small, so Hit@K and Recall@K saturate;
+these numbers demonstrate a working evaluation pipeline, not production retrieval
+quality. A real API call using the same database and model returned the sale deed as
+the top result for an ownership question, and page filtering matched a two-page chunk
+through `metadata.page_numbers`.
+
+Query-plan checks on the populated evaluation database showed that the keyword query
+uses `ix_chunks_text_fts` (`Bitmap Index Scan`), while the semantic query uses the HNSW
+index when sequential scans are discouraged. At six rows PostgreSQL correctly prefers a
+sequential scan for semantic ordering; the index is intended for larger corpora.
 
 ## Document ingestion (Phases 2–3)
 
@@ -336,7 +528,7 @@ used as a filesystem path. Temporary files are deleted after success and after f
 - A PDF with **no extractable text** (for example, a scanned document) returns
   `status: "ocr_required"` (HTTP 200) with zero chunks and an explanatory warning. The
   OCR-required document record is persisted with zero chunks. OCR itself is **not
-  implemented** in Phase 3.
+  implemented**.
 - If individual PDF pages fail but others are readable, the readable pages are processed
   and a warning is attached to the result metadata.
 - Invalid UTF-8/UTF-16/UTF-32 text is rejected rather than silently guessed.
@@ -508,7 +700,9 @@ or document contents in error messages. The server does not log complete documen
 - `id` (`chk_…`, primary key), `document_id` (foreign key, `ON DELETE CASCADE`);
 - `chunk_index` (unique per document), `text`, `source_filename`, `source_type`;
 - `page_number`, `start_offset`, `end_offset`, `metadata` (JSONB);
-- `embedding vector(768)` (not null), with an HNSW index using `vector_cosine_ops`.
+- `embedding vector(768)` (not null), with an HNSW index using `vector_cosine_ops`;
+- `ix_chunks_text_fts`, a GIN expression index on `to_tsvector('english', text)` for
+  hybrid keyword retrieval.
 
 Duplicate behavior: identical bytes **and** sanitized filename return the existing
 document (same `document_id`) without adding rows or re-embedding. The same bytes under a
@@ -534,48 +728,66 @@ curl -X POST http://127.0.0.1:8000/api/v1/documents/ingest \
 docker exec property-intel-pg psql -U property -d property_intelligence \
   -c "SELECT id, filename, status, chunk_count FROM documents;" \
   -c "SELECT document_id, chunk_index, page_number, vector_dims(embedding) FROM chunks;"
+
+# 5. Search the stored chunks.
+curl -X POST http://127.0.0.1:8000/api/v1/retrieval/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What property documents are available?", "top_k": 3, "mode": "semantic"}'
 ```
 
 A successful HTTP 200 means the rows above exist. Restarting the API does not remove
 them. Re-uploading the identical file returns the same `document_id` and creates no
-duplicate rows. Stopping the database before ingestion produces a safe HTTP 503.
+duplicate rows. Stopping the database before ingestion or retrieval produces a safe
+HTTP 503.
 
 ## Verification
 
-The suite covers the Phase 1 health/LLM contracts, all Phase 2 validation/extraction/
-cleaning/chunking behavior, and the new Phase 3 functionality:
+The suite covers Phase 1 health/LLM contracts, Phase 2 validation/extraction/cleaning/
+chunking, Phase 3 embedding/persistence, and Phase 4 retrieval:
 
 - embedding order, batching, empty input, normalization, malformed/non-finite/wrong-
   dimension vectors, provider failures, timeouts, rate limits, and mocked OpenAI errors;
 - document/chunk/vector persistence, metadata and page preservation, new-store reads,
   idempotent re-ingestion, transaction rollback, cascade deletion, constraints,
   dimension mismatch, missing migrations, and unreachable databases;
-- end-to-end ingestion through the API with a mocked embedding provider and a real
-  PostgreSQL/pgvector test database, including failure paths that must not report
-  success or leave rows.
+- retrieval query validation, default/max top-K, cosine score mapping, deterministic
+  ordering, duplicate-free RRF fusion, metadata/page filters, min-score thresholds,
+  provider/database failure mappings, and response metadata;
+- evaluation formulas including missing evidence, duplicate results, partial recall,
+  empty result sets, and invalid cutoffs;
+- end-to-end ingestion and retrieval through the API with mocked providers and a real
+  PostgreSQL/pgvector test database.
 
 ```bash
 cd backend
-pytest -q                     # 87 passed, 13 skipped (no TEST_DATABASE_URL)
+pytest -q                     # 162 passed, 25 skipped (no TEST_DATABASE_URL)
 ```
 
 With a dedicated pgvector test database:
 
 ```bash
 export TEST_DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
-pytest -q                     # 100 passed
+pytest -q                     # 187 passed
 ```
 
-Verified results for this implementation: **87 passed / 13 skipped** without a test
-database and **100 passed** with PostgreSQL/pgvector. A real HTTP ingestion using the
-default local model produced one committed chunk with a 768-dimension vector, and the
-rows remained queryable after the API process stopped. No automated test calls a paid
-embedding or LLM API.
+Verified results for this implementation: **162 passed / 25 skipped** without a test
+database and **187 passed** with PostgreSQL/pgvector. A real HTTP retrieval call using
+the default local model returned the expected sale-deed chunk first, and page filtering
+matched a two-page chunk through `metadata.page_numbers`. The evaluation runner was also
+executed against a real pgvector database with the local embedding model. No automated
+test calls a paid embedding or LLM API.
 
 ## Current limitations and deferred work
 
-- Semantic search, top-k retrieval, metadata filtering, hybrid retrieval, reranking,
-  RAG answers, and citations are **not implemented** (Phase 4+).
+- RAG context construction, grounded answer generation, citations/quotations,
+  hallucination guardrails, conversational memory, streaming, and a chat UI are **not
+  implemented** (Phase 5+).
+- Retrieval filters are document/chunk-level only. There is no property entity or
+  `property_id` association yet, so property-level filtering requires a schema change.
+- No reranking or relevance optimization beyond optional similarity thresholds and
+  hybrid RRF; no learned fusion weights.
+- Hybrid keyword search is English-only (`to_tsvector('english', text)`).
+- No pagination/cursor API; responses are capped by `RETRIEVAL_MAX_TOP_K`.
 - No frontend/dashboard, authentication/authorization, deployment configuration, or
   background job queue.
 - No OCR: image-only PDFs are persisted as `ocr_required` with zero chunks.
@@ -587,11 +799,13 @@ embedding or LLM API.
   dimension requires a new migration and re-embedding existing chunks.
 - The local model downloads on first use; a network/cache failure returns HTTP 502.
   Very long texts may be truncated by the model's own token limit.
-- No task prefix is added for the default Nomic model (it works without one, but
-  retrieval quality in Phase 4 may benefit from adding document/query prefixes).
-- The HNSW index is created empty during migration; no tuning/benchmarking of retrieval
-  parameters has been done yet because retrieval is out of scope.
-- Database writes and embeddings run synchronously in a worker thread; throughput is
-  adequate for development but no load/performance testing was performed.
+- No task prefix is added for the default Nomic model; retrieval still works, but
+  document/query prefixes may improve quality.
+- HNSW parameters (`m`, `ef_construction`, query-time `hnsw.ef_search`) and RRF weights
+  have not been tuned or benchmarked. The evaluation corpus has only six chunks, so
+  Hit@K/Recall@K saturate and precision is depressed; the numbers validate the pipeline,
+  not production quality.
+- Database writes, embeddings, and retrieval run synchronously in a worker thread;
+  throughput is adequate for development but no load/performance testing was performed.
 - The OpenAI-compatible embedding provider is covered by mocked unit tests but was not
   exercised against a live paid API.

@@ -41,7 +41,12 @@ _ENGINE_CACHE: dict[tuple, Engine] = {}
 _ENGINE_CACHE_LOCK = threading.Lock()
 
 
-def _shared_engine(settings: Settings) -> Engine:
+def get_shared_engine(settings: Settings) -> Engine:
+    """Return a process-wide pool for the configured database.
+
+    Shared by ingestion and retrieval so both use the same connection limits
+    and schema verification without building separate pools per request.
+    """
     url = (settings.database_url or "").strip()
     if not url:
         raise DatabaseConfigurationError(
@@ -76,6 +81,68 @@ def _shared_engine(settings: Settings) -> Engine:
                 ) from exc
             _ENGINE_CACHE[key] = engine
     return engine
+
+
+def verify_vector_schema(engine: Engine, settings: Settings) -> int:
+    """Check the tables, pgvector column, and configured dimensions.
+
+    Returns the physical vector dimension. Shared by ingestion and retrieval so
+    both fail with the same safe configuration error instead of surfacing a
+    database exception.
+    """
+    try:
+        with engine.connect() as connection:
+            tables = connection.execute(
+                text(
+                    "SELECT to_regclass('documents'), to_regclass('chunks')"
+                )
+            ).one()
+            if tables[0] is None or tables[1] is None:
+                raise DatabaseSchemaError(
+                    "The database schema is not initialized. Run "
+                    "`alembic upgrade head`."
+                )
+            vector_type = connection.execute(
+                text(
+                    "SELECT format_type(atttypid, atttypmod) "
+                    "FROM pg_attribute "
+                    "WHERE attrelid = 'chunks'::regclass "
+                    "AND attname = 'embedding' AND NOT attisdropped"
+                )
+            ).scalar_one_or_none()
+    except (DatabaseSchemaError, DatabaseConfigurationError):
+        raise
+    except ProgrammingError as exc:
+        raise DatabaseSchemaError(
+            "The database schema is not initialized or the pgvector "
+            "extension is missing. Run `CREATE EXTENSION vector` and "
+            "`alembic upgrade head`."
+        ) from exc
+    except OperationalError as exc:
+        raise DatabaseUnavailableError(
+            "The database is unavailable. Check that PostgreSQL is "
+            "running and DATABASE_URL is correct."
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise DatabaseUnavailableError(
+            "The database could not be reached."
+        ) from exc
+
+    match = _VECTOR_TYPE_RE.fullmatch(vector_type or "")
+    if match is None:
+        raise DatabaseSchemaError(
+            "The chunks.embedding column is not a pgvector vector column. "
+            "Run `alembic upgrade head`."
+        )
+    dimension = int(match.group(1))
+    if dimension != settings.embedding_dimensions:
+        raise DatabaseSchemaError(
+            "Embedding dimension mismatch: the database vector column has "
+            f"dimension {dimension}, but EMBEDDING_DIMENSIONS is "
+            f"{settings.embedding_dimensions}. Create a migration "
+            "for the new model dimensions before storing or retrieving chunks."
+        )
+    return dimension
 
 
 class DocumentStore(Protocol):
@@ -142,7 +209,7 @@ class SqlAlchemyDocumentStore:
         if self._engine is None:
             with self._lock:
                 if self._engine is None:
-                    self._engine = _shared_engine(self.settings)
+                    self._engine = get_shared_engine(self.settings)
         return self._engine
 
     def _get_session_factory(self) -> sessionmaker[Session]:
@@ -164,60 +231,9 @@ class SqlAlchemyDocumentStore:
         with self._lock:
             if self._verified_dimensions is not None:
                 return
-            engine = self._get_engine()
-            try:
-                with engine.connect() as connection:
-                    tables = connection.execute(
-                        text(
-                            "SELECT to_regclass('documents'), to_regclass('chunks')"
-                        )
-                    ).one()
-                    if tables[0] is None or tables[1] is None:
-                        raise DatabaseSchemaError(
-                            "The database schema is not initialized. Run "
-                            "`alembic upgrade head`."
-                        )
-                    vector_type = connection.execute(
-                        text(
-                            "SELECT format_type(atttypid, atttypmod) "
-                            "FROM pg_attribute "
-                            "WHERE attrelid = 'chunks'::regclass "
-                            "AND attname = 'embedding' AND NOT attisdropped"
-                        )
-                    ).scalar_one_or_none()
-            except (DatabaseSchemaError, DatabaseConfigurationError):
-                raise
-            except ProgrammingError as exc:
-                raise DatabaseSchemaError(
-                    "The database schema is not initialized or the pgvector "
-                    "extension is missing. Run `CREATE EXTENSION vector` and "
-                    "`alembic upgrade head`."
-                ) from exc
-            except OperationalError as exc:
-                raise DatabaseUnavailableError(
-                    "The database is unavailable. Check that PostgreSQL is "
-                    "running and DATABASE_URL is correct."
-                ) from exc
-            except SQLAlchemyError as exc:
-                raise DatabaseUnavailableError(
-                    "The database could not be reached."
-                ) from exc
-
-        match = _VECTOR_TYPE_RE.fullmatch(vector_type or "")
-        if match is None:
-            raise DatabaseSchemaError(
-                "The chunks.embedding column is not a pgvector vector column. "
-                "Run `alembic upgrade head`."
+            self._verified_dimensions = verify_vector_schema(
+                self._get_engine(), self.settings
             )
-        dimension = int(match.group(1))
-        if dimension != self.settings.embedding_dimensions:
-            raise DatabaseSchemaError(
-                "Embedding dimension mismatch: the database vector column has "
-                f"dimension {dimension}, but EMBEDDING_DIMENSIONS is "
-                f"{self.settings.embedding_dimensions}. Create a migration "
-                "for the new model dimensions before ingesting."
-            )
-        self._verified_dimensions = dimension
 
     # --- reads -----------------------------------------------------------
 

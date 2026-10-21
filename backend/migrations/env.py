@@ -14,7 +14,9 @@ from app.db import models  # noqa: F401  (registers tables on Base.metadata)
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep application loggers alive when migrations are invoked in-process
+    # (for example by the test fixtures).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

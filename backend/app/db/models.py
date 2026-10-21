@@ -1,4 +1,4 @@
-"""Persistent document, chunk, and embedding models (Phase 3).
+"""Persistent document, chunk, embedding, and retrieval-index models.
 
 The embedding column uses pgvector's ``vector`` type. Its dimension is fixed by
 the database migration (768 for the default local model). Mismatches between the
@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text as sql_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -101,6 +102,11 @@ class Chunk(Base):
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_chunks_text_fts",
+            sql_text("to_tsvector('english', text)"),
+            postgresql_using="gin",
         ),
     )
 

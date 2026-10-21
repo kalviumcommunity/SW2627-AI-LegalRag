@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     embedding_base_url: str = Field(default="https://api.openai.com/v1")
     embedding_cache_dir: str | None = Field(default=None)
 
+    # --- Phase 4: retrieval ----------------------------------------------
+    retrieval_default_top_k: int = Field(default=5, ge=1)
+    retrieval_max_top_k: int = Field(default=50, ge=1)
+    retrieval_max_query_chars: int = Field(default=2000, gt=0)
+    # Candidate pool per retriever before reciprocal rank fusion. The service
+    # clamps this to at least the requested ``top_k``.
+    retrieval_hybrid_candidate_limit: int = Field(default=50, ge=1)
+    # RRF's rank-smoothing constant (the standard value is 60).
+    retrieval_rrf_k: int = Field(default=60, gt=0)
+
     @property
     def allowed_document_extensions(self) -> frozenset[str]:
         """Normalized, dot-free extensions allowed for ingestion."""
@@ -91,6 +101,14 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_MODEL must not be empty")
         return self
 
+    @model_validator(mode="after")
+    def _validate_retrieval(self) -> "Settings":
+        if self.retrieval_default_top_k > self.retrieval_max_top_k:
+            raise ValueError(
+                "RETRIEVAL_DEFAULT_TOP_K must not exceed RETRIEVAL_MAX_TOP_K"
+            )
+        return self
+
     @property
     def is_llm_configured(self) -> bool:
         """True when the selected provider has the credentials it needs."""
@@ -110,6 +128,11 @@ class Settings(BaseSettings):
         if provider == "openai":
             return bool(self.embedding_api_key and self.embedding_api_key.strip())
         return False
+
+    @property
+    def is_retrieval_configured(self) -> bool:
+        """Retrieval needs both a vector database and an embedding provider."""
+        return self.is_database_configured and self.is_embedding_configured
 
 
 @lru_cache
