@@ -1,4 +1,4 @@
-# Property Intelligence Platform — Phases 1–2 (Sprint 2)
+# Property Intelligence Platform — Phases 1–3 (Sprint 2)
 
 AI-powered Real Estate Property Intelligence Platform. Buyers currently cannot get
 trustworthy, consolidated answers about a property without manually cross-checking
@@ -9,14 +9,19 @@ processing, embeddings, vector retrieval, and RAG-grounded reports.
 endpoints, and a general (non-RAG) LLM chat endpoint backed by Groq. Chat answers are
 **general explanations only** and are **not** grounded in property documents.
 
-**Phase 2 (this implementation):** safe document ingestion for PDF, TXT, and Markdown —
-validation, page-aware text extraction, conservative cleaning, configurable overlapping
-chunking, and traceable chunk metadata exposed through `POST /api/v1/documents/ingest`.
+**Phase 2:** safe document ingestion for PDF, TXT, and Markdown — validation,
+page-aware text extraction, conservative cleaning, configurable overlapping chunking,
+and traceable chunk metadata exposed through `POST /api/v1/documents/ingest`.
 
-Phase 2 explicitly does **not** implement embeddings, vector databases, semantic search,
-hybrid retrieval, RAG answer generation, discrepancy detection, a frontend, or deployment.
-Uploaded documents and generated chunks are **not persisted**: chunks are returned in the
-HTTP response and are lost when the request completes.
+**Phase 3 (this implementation):** configurable embedding generation plus durable
+PostgreSQL/pgvector storage. Chunks produced by Phase 2 are embedded and committed with
+their document, text, ordering, page references, offsets, metadata, and vectors. A
+successful ingestion response is returned only after the database transaction commits.
+Identical re-uploads are idempotent and return the previously stored document.
+
+Phase 3 explicitly does **not** implement semantic search, top-k retrieval, metadata
+filtering, hybrid retrieval, reranking, RAG answer generation, citations, a frontend,
+OCR, or deployment. Those belong to later phases.
 
 ## Repository layout
 
@@ -25,6 +30,12 @@ HTTP response and are lost when the request completes.
 ├── Readme.md
 ├── .gitignore
 └── backend/
+    ├── alembic.ini                    # Alembic config (URL read from DATABASE_URL)
+    ├── migrations/
+    │   ├── env.py
+    │   ├── script.py.mako
+    │   └── versions/
+    │       └── 0001_create_documents_and_chunks.py
     ├── app/
     │   ├── main.py                    # FastAPI entry point (create_app factory + app)
     │   ├── api/routes/
@@ -32,8 +43,11 @@ HTTP response and are lost when the request completes.
     │   │   ├── llm.py                 # POST /llm/chat
     │   │   └── documents.py           # POST /documents/ingest
     │   ├── core/
-    │   │   ├── config.py              # Pydantic Settings (LLM + ingestion)
+    │   │   ├── config.py              # Pydantic Settings (LLM, ingestion, Phase 3)
     │   │   └── prompt.py              # Phase 1 system prompt
+    │   ├── db/
+    │   │   ├── base.py                # SQLAlchemy declarative base
+    │   │   └── models.py              # documents / chunks / pgvector models
     │   ├── schemas/
     │   │   ├── llm.py                 # ChatRequest / ChatResponse
     │   │   └── documents.py           # DocumentChunk / IngestResponse
@@ -45,19 +59,92 @@ HTTP response and are lost when the request completes.
     │       ├── chunking.py            # character-based overlapping chunks
     │       ├── temp_storage.py        # secure temp files + guaranteed cleanup
     │       ├── ingestion_errors.py    # safe API-facing error types
+    │       ├── storage_errors.py      # safe database/storage error types
+    │       ├── embedding_service.py   # providers, batching, validation, normalization
+    │       ├── document_store.py      # transactional PostgreSQL/pgvector storage
     │       └── document_ingestion.py  # pipeline orchestration
     ├── tests/
-    │   ├── conftest.py
+    │   ├── conftest.py                # settings isolation + database fixtures
+    │   ├── fakes.py                   # mocked provider + in-memory store
     │   ├── pdf_factory.py             # synthetic PDF fixtures (no external services)
     │   ├── test_health.py
     │   ├── test_llm.py
     │   ├── test_chunking.py
-    │   └── test_documents.py
+    │   ├── test_documents.py          # Phase 2 API regression tests
+    │   ├── test_embeddings.py
+    │   ├── test_persistence.py        # requires TEST_DATABASE_URL
+    │   └── test_ingestion_integration.py  # requires TEST_DATABASE_URL
     ├── requirements.txt
     ├── pytest.ini
     ├── .env.example                   # placeholder values only, never real secrets
     └── .gitignore
 ```
+
+## Prerequisites
+
+- Python 3.11+ (verified on Python 3.13 on Windows).
+- PostgreSQL with the **pgvector** extension. `pgvector/pgvector:pg17`
+  (pgvector 0.8.7) was used for verification. A local PostgreSQL installation works
+  too if the `vector` extension is installed.
+- No paid embedding API is required with the default configuration. The first local
+  embedding run downloads a ~130 MB quantized ONNX model from Hugging Face.
+
+## Database setup (local development)
+
+The simplest option is Docker. Only PostgreSQL/pgvector is needed; the application
+itself runs directly with Python.
+
+```bash
+docker run -d --name property-intel-pg \
+  -e POSTGRES_USER=property \
+  -e POSTGRES_PASSWORD=property_dev_password \
+  -e POSTGRES_DB=property_intelligence \
+  -p 5433:5432 \
+  -v property_intel_pgdata:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+```
+
+Port `5433` avoids clashing with a PostgreSQL server already using `5432`; change the
+mapping if `5432` is free. The named volume keeps records across container restarts.
+
+Create a separate database for tests once:
+
+```bash
+docker exec property-intel-pg psql -U property -d postgres \
+  -c "CREATE DATABASE property_intelligence_test;"
+```
+
+Using a local PostgreSQL installation instead:
+
+1. Create a database and user, for example `property_intelligence`.
+2. Install pgvector for your PostgreSQL version.
+3. Enable the extension (as a superuser or a user with the required privilege):
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+4. Run the migrations described below.
+
+### Migrations
+
+Alembic creates `documents` and `chunks`, enables pgvector, and creates the HNSW
+cosine index. Set `DATABASE_URL` (directly or in `backend/.env`) and run from
+`backend/`:
+
+```bash
+alembic upgrade head
+alembic current
+```
+
+Useful commands:
+
+```bash
+alembic downgrade base     # removes the Phase 3 tables (leaves the extension)
+alembic history
+```
+
+The application does **not** auto-run migrations at startup. If the schema is missing,
+ingestion returns HTTP `503` with a safe message asking you to run
+`alembic upgrade head`.
 
 ## Configuration
 
@@ -83,6 +170,18 @@ Copy `backend/.env.example` to `backend/.env` and set values:
 | `DOCUMENT_CHUNK_OVERLAP_CHARS` | `480` | Overlap characters between chunks |
 | `DOCUMENT_CHUNK_MIN_SPLIT_RATIO` | `0.5` | Minimum fraction of chunk size before a preferred boundary is used |
 | `DOCUMENT_TEMP_DIR` | _(OS temp)_ | Optional private temporary directory |
+| `DATABASE_URL` | _(none)_ | **Required for ingestion.** Example: `postgresql+psycopg://property:property_dev_password@localhost:5433/property_intelligence` |
+| `DATABASE_ECHO` | `false` | Log SQL (development only; may log chunk text) |
+| `DATABASE_POOL_SIZE` | `5` | SQLAlchemy connection pool size |
+| `DATABASE_CONNECT_TIMEOUT_SECONDS` | `5` | PostgreSQL connection timeout |
+| `EMBEDDING_PROVIDER` | `fastembed` | `fastembed` (local, free) or `openai` |
+| `EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5-Q` | Local model or API model name |
+| `EMBEDDING_DIMENSIONS` | `768` | Must match the model and the database column |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts sent to the provider per batch |
+| `EMBEDDING_CACHE_DIR` | _(fastembed default)_ | Optional local model cache directory |
+| `EMBEDDING_API_KEY` | _(none)_ | Required only for `EMBEDDING_PROVIDER=openai` |
+| `EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible embeddings endpoint |
+| `EMBEDDING_TIMEOUT_SECONDS` | `30` | Remote embedding request timeout (no auto-retries) |
 
 Secrets are never hardcoded, never logged, and `.env` files are git-ignored.
 
@@ -91,6 +190,45 @@ Get a free Groq API key at <https://console.groq.com/keys>. The default model
 subject to change) and has a 131K-token context, which suits property Q&A now and
 RAG over documents later. `qwen/qwen3.8-27b` is a free-tier alternative if you need
 longer daily token budgets.
+
+### Embedding model and vectors
+
+The default embedding configuration is:
+
+| Property | Value |
+|---|---|
+| Provider | `fastembed` (local ONNX, no API key) |
+| Model | `nomic-ai/nomic-embed-text-v1.5-Q` |
+| Dimensions | `768` |
+| Context | 8192 tokens |
+| Normalization | L2-normalized by `EmbeddingService` before storage |
+| Distance | Cosine (`vector_cosine_ops`) |
+| Database column | `chunks.embedding vector(768)` |
+| Batch size | 32 texts per provider call |
+
+Chunk text is embedded exactly as chunked; no task prefix is added. The model is
+downloaded once per process/cache on first use. Quantized local inference is
+CPU-friendly, but the first request after a cold start is slower.
+
+To use an OpenAI-compatible provider instead:
+
+```dotenv
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=768
+EMBEDDING_API_KEY=<your-key>
+```
+
+For `text-embedding-3-*` models the service requests the configured dimensions. Vectors
+are validated (non-empty, numeric, finite, expected length) and normalized regardless of
+provider. `GET /api/v1/ready` reports configuration flags only; it never downloads a
+model or makes a paid call.
+
+**Changing dimensions requires a new migration.** The migration fixes `vector(768)`;
+the store compares the physical column dimension with `EMBEDDING_DIMENSIONS` and fails
+with a clear configuration error instead of inserting incompatible data. Changing
+`EMBEDDING_MODEL`/`EMBEDDING_DIMENSIONS` without a migration (and re-embedding existing
+chunks) is not supported.
 
 ## Development commands
 
@@ -112,18 +250,41 @@ source .venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-Run the API (from the `backend/` directory):
+Copy the environment template and fill in `DATABASE_URL` (never commit `.env`):
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Apply migrations and run the API (from the `backend/` directory):
 
 ```bash
 cd backend
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Run the tests (from the `backend/` directory; the LLM provider is mocked, so no API key
-or paid calls are needed):
+Run the tests (from `backend/`). Tests never call a paid API: the LLM, embedding
+provider, and database writes are mocked or use a dedicated test database.
 
 ```bash
 cd backend
+pytest -q
+```
+
+Database-backed tests are skipped unless `TEST_DATABASE_URL` points to a **separate**
+PostgreSQL/pgvector database. The fixture drops and recreates its tables, so never point
+it at production or development data:
+
+```bash
+# PowerShell
+$env:TEST_DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
+pytest -q
+```
+
+```bash
+# bash
+export TEST_DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
 pytest -q
 ```
 
@@ -133,16 +294,17 @@ Interactive docs (dev server): `http://127.0.0.1:8000/docs`
 
 Endpoints (all under `API_PREFIX`, default `/api/v1`):
 
-- `GET /api/v1/health` → `{"status": "ok", "service": "property-intelligence-api"}`
-  Liveness only; never calls the LLM provider.
-- `GET /api/v1/ready` → readiness incl. `llm_configured` flag; no paid calls.
+- `GET /api/v1/health` → liveness only; never calls the LLM, embedding provider, or DB.
+- `GET /api/v1/ready` → configuration flags for the LLM, embedding provider/model/
+  dimensions, and database. No paid calls or model downloads.
 - `POST /api/v1/llm/chat` with `{"message": "..."}` → `{"answer": "..."}`.
   Empty/whitespace messages → 422; over-length → 422; missing API key → 503;
   rate limit → 429; timeout → 504; auth/upstream failure → 502.
   Error responses contain safe messages only (no stack traces, no secrets).
-- `POST /api/v1/documents/ingest` → structured ingestion result (below).
+- `POST /api/v1/documents/ingest` → validate, extract, clean, chunk, embed, and persist
+  a document (Phases 2–3; response below).
 
-## Document ingestion (Phase 2)
+## Document ingestion (Phases 2–3)
 
 ### Supported formats and validation
 
@@ -172,8 +334,9 @@ used as a filesystem path. Temporary files are deleted after success and after f
 - Encrypted/password-protected PDFs and structurally malformed PDFs return
   `status: "failed"` with a safe message (HTTP 422).
 - A PDF with **no extractable text** (for example, a scanned document) returns
-  `status: "ocr_required"` (HTTP 200) with zero chunks and an explanatory warning.
-  OCR itself is **not implemented** in Phase 2.
+  `status: "ocr_required"` (HTTP 200) with zero chunks and an explanatory warning. The
+  OCR-required document record is persisted with zero chunks. OCR itself is **not
+  implemented** in Phase 3.
 - If individual PDF pages fail but others are readable, the readable pages are processed
   and a warning is attached to the result metadata.
 - Invalid UTF-8/UTF-16/UTF-32 text is rejected rather than silently guessed.
@@ -225,7 +388,22 @@ Each chunk always includes:
 `metadata` contains `character_count`, the chunking parameters, extraction warnings,
 `total_pages` for PDFs, and `page_numbers` for PDF chunks. Multi-page chunks report all
 applicable pages in `metadata.page_numbers` and keep `page_number` as `null` rather than
-inventing a single page. Non-paginated formats omit page fields.
+inventing a single page. Non-paginated formats omit page fields. The complete metadata
+JSON is preserved in the `chunks.metadata` JSONB column.
+
+### Embedding and persistence behavior
+
+1. The upload is validated, extracted, cleaned, and chunked using the Phase 2 services.
+2. Before embedding, the service checks whether the same bytes and sanitized filename
+   were already committed. If so, the existing document/chunks are returned and no
+   second embedding call is made.
+3. Chunks are embedded in input order in batches. Every returned vector is checked for a
+   non-empty, numeric, finite, expected-dimension response, then L2-normalized.
+4. The document row and all chunk rows (including vectors and metadata) are written in a
+   single database transaction. A failure rolls back the whole document; no orphaned
+   chunks or misleading `processed` status remain.
+5. The API returns success only after the transaction commits. Database, embedding, and
+   transaction failures return safe errors and never claim that indexing succeeded.
 
 ### Request example
 
@@ -289,12 +467,14 @@ print(response.status_code, response.json())
 
 `status` is one of:
 
-- `processed` — text extracted, cleaned, and chunked (HTTP 200).
-- `ocr_required` — a PDF was accepted but has no extractable text (HTTP 200, zero chunks).
+- `processed` — text extracted, chunked, embedded, and committed (HTTP 200).
+- `ocr_required` — a PDF was accepted but has no extractable text; the document record is
+  committed with zero chunks (HTTP 200).
 - `failed` — extraction failed, e.g. encrypted or malformed PDF (HTTP 422 with the same
-  structured response schema and a safe `detail`).
+  structured response schema and a safe `detail`). Failed extraction attempts are not
+  persisted.
 
-Validation errors use the standard FastAPI `{"detail": "..."}` shape:
+Validation and service errors use the standard FastAPI `{"detail": "..."}` shape:
 
 | Condition | HTTP status |
 |---|---|
@@ -303,30 +483,115 @@ Validation errors use the standard FastAPI `{"detail": "..."}` shape:
 | Unsupported extension or mismatched MIME type | `415` |
 | Missing multipart `file` field | `422` |
 | Encrypted/malformed PDF or other extraction failure | `422` (`status: "failed"`) |
+| Embedding provider rate limit | `429` |
+| Database or embedding configuration unavailable; missing migrations; dimension mismatch | `503` |
+| Embedding provider unavailable or invalid/malformed embedding response | `502` |
+| Embedding provider timeout | `504` |
+| Database transaction or other storage failure | `500` (nothing committed) |
 | Temporary storage/internal failure | `500` with a safe message |
 
-Responses never include stack traces, filesystem paths, or document contents in error
-messages. The server does not log complete document text.
+Responses never include stack traces, filesystem paths, database credentials, API keys,
+or document contents in error messages. The server does not log complete document text.
 
-### Persistence limitation
+### Database schema
 
-There is no database or durable document store in Phases 1–2. The ingestion response is
-the only copy of the chunks; a server restart loses them. Phase 3 is expected to consume
-the chunk objects/service directly for embedding and indexing; a durable store can be
-added then using the project's conventions.
+`documents`:
+
+- `id` (`doc_…`, primary key), `filename`, `source_type`, `status`;
+- `content_sha256` plus a unique `(content_sha256, filename)` constraint for idempotent
+  re-ingestion;
+- `extracted_characters`, `chunk_count`, `page_count`;
+- `warnings`/`detail` (JSONB/text), `created_at`, `updated_at`.
+
+`chunks`:
+
+- `id` (`chk_…`, primary key), `document_id` (foreign key, `ON DELETE CASCADE`);
+- `chunk_index` (unique per document), `text`, `source_filename`, `source_type`;
+- `page_number`, `start_offset`, `end_offset`, `metadata` (JSONB);
+- `embedding vector(768)` (not null), with an HNSW index using `vector_cosine_ops`.
+
+Duplicate behavior: identical bytes **and** sanitized filename return the existing
+document (same `document_id`) without adding rows or re-embedding. The same bytes under a
+different filename are treated as a new document. New content under an existing filename
+creates a new document; there is no in-place replacement or version history yet.
+
+### Manual verification
+
+```bash
+# 1. Start PostgreSQL/pgvector (see Database setup) and apply migrations.
+cd backend
+export DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence'
+alembic upgrade head
+
+# 2. Start the API.
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 3. In another terminal, ingest a document (the first run may download the model).
+curl -X POST http://127.0.0.1:8000/api/v1/documents/ingest \
+  -F "file=@property_report.pdf;type=application/pdf"
+
+# 4. Verify committed rows directly in PostgreSQL.
+docker exec property-intel-pg psql -U property -d property_intelligence \
+  -c "SELECT id, filename, status, chunk_count FROM documents;" \
+  -c "SELECT document_id, chunk_index, page_number, vector_dims(embedding) FROM chunks;"
+```
+
+A successful HTTP 200 means the rows above exist. Restarting the API does not remove
+them. Re-uploading the identical file returns the same `document_id` and creates no
+duplicate rows. Stopping the database before ingestion produces a safe HTTP 503.
 
 ## Verification
 
-The test suite covers TXT/Markdown/PDF ingestion, page-number preservation, identifiers,
-chunk size/overlap, empty and whitespace-only inputs, invalid extensions/content/MIME/
-encoding, upload limits, encrypted and malformed PDFs, OCR-required PDFs, filename
-sanitization/path traversal, temp-file cleanup after success and failure, response schema
-stability, and the Phase 1 health/LLM regressions.
+The suite covers the Phase 1 health/LLM contracts, all Phase 2 validation/extraction/
+cleaning/chunking behavior, and the new Phase 3 functionality:
+
+- embedding order, batching, empty input, normalization, malformed/non-finite/wrong-
+  dimension vectors, provider failures, timeouts, rate limits, and mocked OpenAI errors;
+- document/chunk/vector persistence, metadata and page preservation, new-store reads,
+  idempotent re-ingestion, transaction rollback, cascade deletion, constraints,
+  dimension mismatch, missing migrations, and unreachable databases;
+- end-to-end ingestion through the API with a mocked embedding provider and a real
+  PostgreSQL/pgvector test database, including failure paths that must not report
+  success or leave rows.
 
 ```bash
 cd backend
-pytest -q
+pytest -q                     # 87 passed, 13 skipped (no TEST_DATABASE_URL)
 ```
 
-Phase 1 functionality is unchanged: `GET /health`, `GET /ready`, and `POST /llm/chat`
-retain their contracts, and the LLM is still mocked in tests.
+With a dedicated pgvector test database:
+
+```bash
+export TEST_DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
+pytest -q                     # 100 passed
+```
+
+Verified results for this implementation: **87 passed / 13 skipped** without a test
+database and **100 passed** with PostgreSQL/pgvector. A real HTTP ingestion using the
+default local model produced one committed chunk with a 768-dimension vector, and the
+rows remained queryable after the API process stopped. No automated test calls a paid
+embedding or LLM API.
+
+## Current limitations and deferred work
+
+- Semantic search, top-k retrieval, metadata filtering, hybrid retrieval, reranking,
+  RAG answers, and citations are **not implemented** (Phase 4+).
+- No frontend/dashboard, authentication/authorization, deployment configuration, or
+  background job queue.
+- No OCR: image-only PDFs are persisted as `ocr_required` with zero chunks.
+- Failed extraction attempts are not persisted; only `processed` and `ocr_required`
+  document records exist.
+- Re-ingestion is idempotent for identical bytes + filename only. There is no update/
+  replacement API, version history, or deletion endpoint.
+- The vector dimension is fixed at 768 by the initial migration. A different model
+  dimension requires a new migration and re-embedding existing chunks.
+- The local model downloads on first use; a network/cache failure returns HTTP 502.
+  Very long texts may be truncated by the model's own token limit.
+- No task prefix is added for the default Nomic model (it works without one, but
+  retrieval quality in Phase 4 may benefit from adding document/query prefixes).
+- The HNSW index is created empty during migration; no tuning/benchmarking of retrieval
+  parameters has been done yet because retrieval is out of scope.
+- Database writes and embeddings run synchronously in a worker thread; throughput is
+  adequate for development but no load/performance testing was performed.
+- The OpenAI-compatible embedding provider is covered by mocked unit tests but was not
+  exercised against a live paid API.

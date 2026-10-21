@@ -1,22 +1,30 @@
 """End-to-end document ingestion orchestration.
 
 Pipeline: validation -> secure temporary storage -> extraction -> cleaning ->
-chunking -> source metadata -> structured result.
+chunking -> source metadata -> embeddings -> durable PostgreSQL/pgvector
+storage -> structured result.
 
-Phase 2 stores nothing durably: uploaded files are deleted immediately after
-processing and chunks exist only in the response. Persistence and indexing are
-later-phase concerns.
+Uploaded files are still deleted immediately after processing. Chunks are now
+only reported as successful after their document, text, metadata, and embedding
+records have been committed. Identical uploads (same bytes and filename) return
+the previously stored document instead of creating duplicate rows.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 
 from app.core.config import Settings, get_settings
 from app.schemas.documents import DocumentChunk, IngestResponse
 from app.services.chunking import ChunkingConfig, TextChunk, chunk_text
+from app.services.document_store import (
+    DocumentStore,
+    create_document_store,
+)
 from app.services.document_validation import ValidatedUpload, validate_upload
+from app.services.embedding_service import EmbeddingService
 from app.services.ingestion_errors import (
     DocumentExtractionError,
     DocumentValidationError,
@@ -40,19 +48,29 @@ def _new_identifier(prefix: str) -> str:
 class DocumentIngestionService:
     """Turns a validated upload into traceable chunks."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        embedding_service: EmbeddingService | None = None,
+        store: DocumentStore | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self.chunking_config = ChunkingConfig(
             chunk_size_chars=self.settings.document_chunk_size_chars,
             overlap_chars=self.settings.document_chunk_overlap_chars,
             min_split_ratio=self.settings.document_chunk_min_split_ratio,
         )
+        self.embedding_service = embedding_service or EmbeddingService(
+            self.settings
+        )
+        self.store = store or create_document_store(self.settings)
 
     def ingest(
         self, data: bytes, filename: str | None, content_type: str | None
     ) -> IngestResponse:
         document_id = _new_identifier("doc")
         upload = validate_upload(data, filename, content_type, self.settings)
+        content_hash = hashlib.sha256(upload.data).hexdigest()
 
         try:
             extraction = self._extract(upload)
@@ -77,7 +95,11 @@ class DocumentIngestionService:
 
         if not cleaned_pages:
             if upload.source_type == "pdf":
-                return self._ocr_required(document_id, upload, extraction)
+                return self._persist(
+                    self._ocr_required(document_id, upload, extraction),
+                    content_hash,
+                    [],
+                )
             raise DocumentValidationError(
                 "The document contains no readable text after cleaning."
             )
@@ -100,16 +122,42 @@ class DocumentIngestionService:
             for text_chunk in text_chunks
         ]
 
-        return IngestResponse(
-            document_id=document_id,
-            filename=upload.filename,
-            status="processed",
-            extracted_characters=sum(len(text) for _, text in cleaned_pages),
-            chunk_count=len(chunks),
-            chunks=chunks,
-            page_count=extraction.page_count,
-            warnings=extraction.warnings,
+        # Identical uploads are idempotent: return the committed record without
+        # spending another embedding call or writing duplicate rows.
+        existing = self.store.find_by_content_hash(content_hash, upload.filename)
+        if existing is not None:
+            return existing
+
+        embeddings = self.embedding_service.embed_chunks(chunks)
+
+        return self._persist(
+            IngestResponse(
+                document_id=document_id,
+                filename=upload.filename,
+                status="processed",
+                extracted_characters=sum(len(text) for _, text in cleaned_pages),
+                chunk_count=len(chunks),
+                chunks=chunks,
+                page_count=extraction.page_count,
+                warnings=extraction.warnings,
+            ),
+            content_hash,
+            embeddings,
         )
+
+    def _persist(
+        self,
+        response: IngestResponse,
+        content_hash: str,
+        embeddings: list[list[float]],
+    ) -> IngestResponse:
+        """Check for an existing identical upload, then commit atomically."""
+        existing = self.store.find_by_content_hash(
+            content_hash, response.filename
+        )
+        if existing is not None:
+            return existing
+        return self.store.save(response, content_hash, embeddings)
 
     def _extract(self, upload: ValidatedUpload) -> ExtractionResult:
         extractor = get_extractor(upload.extension)

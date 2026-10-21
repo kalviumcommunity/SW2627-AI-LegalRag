@@ -40,6 +40,27 @@ class Settings(BaseSettings):
     document_chunk_min_split_ratio: float = Field(default=0.5, gt=0, le=1)
     document_temp_dir: str | None = Field(default=None)
 
+    # --- Phase 3: embeddings and persistent vector storage ---------------
+    # PostgreSQL + pgvector connection string. Examples:
+    #   postgresql+psycopg://user:password@localhost:5432/property_intelligence
+    # When unset, ingestion fails safely with HTTP 503 instead of pretending
+    # that records were stored.
+    database_url: str | None = Field(default=None)
+    database_echo: bool = Field(default=False)
+    database_pool_size: int = Field(default=5, gt=0)
+    database_connect_timeout_seconds: int = Field(default=5, ge=1)
+
+    # ``fastembed`` runs a local ONNX model (no API key, no per-call cost).
+    # ``openai`` calls an OpenAI-compatible embeddings endpoint.
+    embedding_provider: str = Field(default="fastembed")
+    embedding_model: str = Field(default="nomic-ai/nomic-embed-text-v1.5-Q")
+    embedding_dimensions: int = Field(default=768, gt=0)
+    embedding_batch_size: int = Field(default=32, gt=0)
+    embedding_timeout_seconds: float = Field(default=30.0, gt=0)
+    embedding_api_key: str | None = Field(default=None)
+    embedding_base_url: str = Field(default="https://api.openai.com/v1")
+    embedding_cache_dir: str | None = Field(default=None)
+
     @property
     def allowed_document_extensions(self) -> frozenset[str]:
         """Normalized, dot-free extensions allowed for ingestion."""
@@ -59,11 +80,35 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_embedding(self) -> "Settings":
+        provider = (self.embedding_provider or "").strip().lower()
+        if provider not in {"fastembed", "openai"}:
+            raise ValueError(
+                "EMBEDDING_PROVIDER must be 'fastembed' or 'openai'"
+            )
+        if not (self.embedding_model or "").strip():
+            raise ValueError("EMBEDDING_MODEL must not be empty")
+        return self
+
     @property
     def is_llm_configured(self) -> bool:
         """True when the selected provider has the credentials it needs."""
         if self.llm_provider.strip().lower() == "groq":
             return bool(self.groq_api_key and self.groq_api_key.strip())
+        return False
+
+    @property
+    def is_database_configured(self) -> bool:
+        return bool(self.database_url and self.database_url.strip())
+
+    @property
+    def is_embedding_configured(self) -> bool:
+        provider = (self.embedding_provider or "").strip().lower()
+        if provider == "fastembed":
+            return True
+        if provider == "openai":
+            return bool(self.embedding_api_key and self.embedding_api_key.strip())
         return False
 
 
