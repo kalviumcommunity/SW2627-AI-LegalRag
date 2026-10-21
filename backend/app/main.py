@@ -3,7 +3,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import health, llm
+from app.api.routes import documents, health, llm
 from app.core.config import get_settings
 from app.services.llm_service import (
     LLMAuthenticationError,
@@ -19,11 +19,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         description=(
-            "Phase 1 of the Property Intelligence Platform: health checks plus a "
-            "general (non-RAG) LLM chat endpoint. Answers are not grounded in "
-            "property documents yet."
+            "Property Intelligence Platform: health checks, a general (non-RAG) "
+            "LLM chat endpoint, and Phase 2 document ingestion/chunking. "
+            "Answers are not grounded in property documents yet."
         ),
-        version="0.1.0",
+        version="0.2.0",
     )
 
     # Map service errors raised in dependencies (e.g. missing API key at
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(llm.router, prefix=settings.api_prefix)
+    app.include_router(documents.router, prefix=settings.api_prefix)
     return app
 
 
