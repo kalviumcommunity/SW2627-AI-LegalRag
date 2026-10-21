@@ -11,7 +11,9 @@ from app.api.routes import documents
 from app.core.config import Settings
 from app.main import create_app
 from app.services.document_validation import sanitize_filename
+from app.services.embedding_service import EmbeddingService
 from app.services.text_cleaning import clean_text
+from tests.fakes import FakeDocumentStore, FakeEmbeddingProvider
 from tests.pdf_factory import make_pdf
 
 RESPONSE_KEYS = {
@@ -49,6 +51,7 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
     values = {
         "groq_api_key": None,
         "document_temp_dir": str(tmp_path / "ingest_temp"),
+        "embedding_dimensions": 8,
     }
     values.update(overrides)
     return Settings(**values)
@@ -57,6 +60,15 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
 def _client(settings: Settings) -> TestClient:
     app = create_app()
     app.dependency_overrides[documents.get_settings_dep] = lambda: settings
+    embedding_service = EmbeddingService(
+        settings,
+        provider=FakeEmbeddingProvider(dimensions=settings.embedding_dimensions),
+    )
+    store = FakeDocumentStore()
+    app.dependency_overrides[documents.get_embedding_service] = (
+        lambda: embedding_service
+    )
+    app.dependency_overrides[documents.get_document_store] = lambda: store
     return TestClient(app)
 
 
