@@ -1,0 +1,126 @@
+{
+  "description": "Synthetic Bengaluru property-intelligence corpus and retrieval questions. Text is original synthetic content authored for this evaluation; it is not real property data.",
+  "documents": [
+    {
+      "key": "sale_deed",
+      "filename": "sale_deed.txt",
+      "format": "txt",
+      "content": "SALE DEED\n\nThis sale deed records that the registered owner is Ananya Rao and that the title to the property is free from encumbrance. The property is located at 14 Rosewood Layout, Whitefield, Bengaluru. The seller transfers full ownership rights to the buyer on completion of the sale consideration of INR 8500000."
+    },
+    {
+      "key": "encumbrance_certificate",
+      "filename": "encumbrance_certificate.txt",
+      "format": "txt",
+      "content": "ENCUMBRANCE CERTIFICATE\n\nThe encumbrance certificate confirms that there are no outstanding loans or mortgages on the property for the last thirty years. The certificate lists the registered sale deed dated 12 January 2024. It is one of the legal documents available in the property file."
+    },
+    {
+      "key": "property_details",
+      "filename": "property_details.md",
+      "format": "md",
+      "content": "# Property Details\n\nThe apartment has a built-up area of 1450 square feet and three bedrooms. It is located on the fifth floor of Rosewood Residency and includes one covered parking space. The property was completed in 2021."
+    },
+    {
+      "key": "locality_report",
+      "filename": "locality_report.txt",
+      "format": "txt",
+      "content": "LOCALITY REPORT\n\nThe metro station is 1.2 kilometres from the property, and the nearest school is 600 metres away. The locality has a hospital, a supermarket, and a public park within two kilometres. Water supply and electricity connections are available."
+    },
+    {
+      "key": "cost_breakdown",
+      "filename": "cost_breakdown.txt",
+      "format": "txt",
+      "content": "COST BREAKDOWN\n\nThe registration charges are 6 percent of the sale value, and stamp duty is 5 percent. The total upfront cost includes the sale consideration of INR 8500000, registration charges, stamp duty, and legal verification fees of INR 15000."
+    },
+    {
+      "key": "title_chain",
+      "filename": "title_chain.pdf",
+      "format": "pdf",
+      "pages": [
+        "TITLE CHAIN - PART ONE. The property was originally allotted by the Bengaluru Development Authority in 1998. The allotment letter names the original allottee as M. Krishnan.",
+        "TITLE CHAIN - PART TWO. The title chain records a sale deed from M. Krishnan to Ananya Rao in 2024. The certificate on page two confirms that the title is clear and marketable."
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "ownership",
+      "query": "Who is the registered owner of the property?",
+      "relevant_markers": ["registered owner is Ananya Rao"],
+      "filters": {}
+    },
+    {
+      "id": "legal_documents",
+      "query": "Which legal documents and certificates are available for this property?",
+      "relevant_markers": [
+        "one of the legal documents available in the property file",
+        "title chain records a sale deed from M. Krishnan to Ananya Rao"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "property_details",
+      "query": "What is the built-up area and how many bedrooms does the apartment have?",
+      "relevant_markers": [
+        "built-up area of 1450 square feet and three bedrooms"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "locality",
+      "query": "How far is the metro station and the nearest school?",
+      "relevant_markers": [
+        "metro station is 1.2 kilometres from the property",
+        "nearest school is 600 metres away"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "costs",
+      "query": "What are the registration charges and stamp duty for the purchase?",
+      "relevant_markers": [
+        "registration charges are 6 percent of the sale value",
+        "stamp duty is 5 percent"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "title_and_loans_cross_document",
+      "query": "Is the title clear and marketable, and are there any outstanding loans?",
+      "relevant_markers": [
+        "title is clear and marketable",
+        "no outstanding loans or mortgages"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "title_chain_page_two",
+      "query": "What does the title chain record on page two?",
+      "relevant_markers": ["title is clear and marketable"],
+      "filters": {
+        "source_filename": "title_chain.pdf",
+        "page_number": 2
+      }
+    },
+    {
+      "id": "sale_consideration_and_legal_fees",
+      "query": "What is the sale consideration and how much are the legal verification fees?",
+      "relevant_markers": [
+        "sale consideration of INR 8500000",
+        "legal verification fees of INR 15000"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "no_evidence_commercial_mumbai",
+      "query": "What is the average price of a commercial office in Mumbai?",
+      "relevant_markers": [],
+      "filters": {}
+    },
+    {
+      "id": "no_evidence_swimming_pool",
+      "query": "Does the property have a swimming pool and a gym?",
+      "relevant_markers": [],
+      "filters": {}
+    }
+  ]
+}

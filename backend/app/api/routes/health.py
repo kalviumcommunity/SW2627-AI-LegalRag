@@ -32,4 +32,7 @@ def ready(settings: Settings = Depends(get_settings_dep)) -> dict:
         "embedding_model": settings.embedding_model,
         "embedding_dimensions": settings.embedding_dimensions,
         "database_configured": settings.is_database_configured,
+        "retrieval_configured": settings.is_retrieval_configured,
+        "retrieval_default_top_k": settings.retrieval_default_top_k,
+        "retrieval_max_top_k": settings.retrieval_max_top_k,
     }

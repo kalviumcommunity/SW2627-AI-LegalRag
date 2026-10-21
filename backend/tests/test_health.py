@@ -42,6 +42,9 @@ def test_ready_reports_llm_configuration_state():
     body = response.json()
     assert body["llm_configured"] is False
     assert body["status"] == "degraded"
+    assert body["retrieval_configured"] is False
+    assert body["retrieval_default_top_k"] == 5
+    assert body["retrieval_max_top_k"] == 50
 
     configured = Settings(groq_api_key="test-key-not-a-secret")
     client = _client_with_settings(configured)
