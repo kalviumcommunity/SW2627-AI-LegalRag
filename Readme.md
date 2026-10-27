@@ -150,9 +150,29 @@ streaming, a frontend UI, OCR, or autonomous legal verification.
 - No paid embedding API is required with the default configuration. The first local
   embedding run downloads a ~130 MB quantized ONNX model from Hugging Face.
 
-## Database setup (local development)
+## Database setup (Neon Cloud PostgreSQL or Local)
 
-The simplest option is Docker. Only PostgreSQL/pgvector is needed; the application
+### Option A: Neon Cloud PostgreSQL (Recommended)
+
+1. Create a project in [Neon Console](https://console.neon.tech).
+2. Copy the connection string. Neon provides both pooled and direct connection strings:
+   - **Pooled connection** (contains `-pooler`): recommended for `DATABASE_URL` during normal application runtime.
+   - **Direct connection**: used automatically by Alembic migrations (the backend strips `-pooler` automatically for DDL operations).
+3. Set `DATABASE_URL` in `backend/.env`:
+   ```bash
+   DATABASE_URL="postgresql://[user]:[password]@ep-[project]-pooler.[region].aws.neon.tech/neondb?sslmode=require"
+   ```
+   *Note: The application automatically normalizes the URL scheme (`postgresql://` or `postgres://` to `postgresql+psycopg://`) and enforces SSL (`sslmode=require`).*
+4. Run migrations and verify connectivity:
+   ```bash
+   cd backend
+   alembic upgrade head
+   python scripts/verify_database.py
+   ```
+
+### Option B: Local Docker / Self-hosted PostgreSQL
+
+The simplest local option is Docker. Only PostgreSQL/pgvector is needed; the application
 itself runs directly with Python.
 
 ```bash

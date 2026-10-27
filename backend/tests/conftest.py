@@ -33,7 +33,8 @@ def test_database_url() -> str:
         pytest.skip(
             "TEST_DATABASE_URL is not set; PostgreSQL/pgvector tests were skipped."
         )
-    return url
+    from app.core.config import normalize_database_url
+    return normalize_database_url(url, direct=True) or url
 
 
 @pytest.fixture(scope="session")

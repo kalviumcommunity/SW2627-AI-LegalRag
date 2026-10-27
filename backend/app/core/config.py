@@ -1,9 +1,47 @@
 """Centralized application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_database_url(url: str | None, direct: bool = False) -> str | None:
+    """Normalize a database connection URL for SQLAlchemy + psycopg (v3).
+
+    - Converts 'postgres://', 'postgresql://', or 'postgresql+psycopg2://'
+      to 'postgresql+psycopg://'.
+    - If direct=True and hostname contains '-pooler' (Neon connection pooler),
+      strips '-pooler' so migrations/DDL bypass transaction-mode PgBouncer.
+    - Ensures 'sslmode=require' is present for Neon/remote databases.
+    - Preserves existing credentials without exposing or logging them.
+    """
+    cleaned = (url or "").strip()
+    if not cleaned:
+        return None
+
+    parts = urlsplit(cleaned)
+    scheme = parts.scheme
+    if scheme in ("postgres", "postgresql", "postgresql+psycopg2"):
+        scheme = "postgresql+psycopg"
+
+    hostname = parts.hostname or ""
+    netloc = parts.netloc
+
+    # Strip -pooler for direct connection if requested (e.g. for Alembic migrations)
+    if direct and "-pooler" in hostname:
+        direct_host = hostname.replace("-pooler", "")
+        netloc = netloc.replace(hostname, direct_host)
+
+    # Ensure sslmode=require for Neon endpoints if not already in query
+    query = parts.query
+    params = parse_qs(query)
+    if "sslmode" not in params and (hostname.endswith("neon.tech") or "neon.tech" in hostname):
+        params["sslmode"] = ["require"]
+        query = urlencode(params, doseq=True)
+
+    return urlunsplit((scheme, netloc, parts.path, query, parts.fragment))
 
 
 class Settings(BaseSettings):
@@ -40,15 +78,14 @@ class Settings(BaseSettings):
     document_chunk_min_split_ratio: float = Field(default=0.5, gt=0, le=1)
     document_temp_dir: str | None = Field(default=None)
 
-    # --- Phase 3: embeddings and persistent vector storage ---------------
-    # PostgreSQL + pgvector connection string. Examples:
-    #   postgresql+psycopg://user:password@localhost:5432/property_intelligence
-    # When unset, ingestion fails safely with HTTP 503 instead of pretending
-    # that records were stored.
+    # PostgreSQL + pgvector connection string (Neon or self-hosted).
+    # Normal traffic can use the pooled connection, while migrations
+    # use direct connections.
     database_url: str | None = Field(default=None)
+    direct_database_url: str | None = Field(default=None)
     database_echo: bool = Field(default=False)
     database_pool_size: int = Field(default=5, gt=0)
-    database_connect_timeout_seconds: int = Field(default=5, ge=1)
+    database_connect_timeout_seconds: int = Field(default=10, ge=1)
 
     # ``fastembed`` runs a local ONNX model (no API key, no per-call cost).
     # ``openai`` calls an OpenAI-compatible embeddings endpoint.
@@ -167,9 +204,19 @@ class Settings(BaseSettings):
             return bool(self.groq_api_key and self.groq_api_key.strip())
         return False
 
+    def get_database_url(self, direct: bool = False) -> str | None:
+        """Return the normalized connection URL for application or migration use.
+
+        - direct=False: Returns normalized application URL (using Neon pooler if configured).
+        - direct=True: Returns normalized direct connection (stripping '-pooler' or using direct_database_url).
+        """
+        if direct and self.direct_database_url and self.direct_database_url.strip():
+            return normalize_database_url(self.direct_database_url, direct=True)
+        return normalize_database_url(self.database_url, direct=direct)
+
     @property
     def is_database_configured(self) -> bool:
-        return bool(self.database_url and self.database_url.strip())
+        return bool(self.get_database_url())
 
     @property
     def is_embedding_configured(self) -> bool:
