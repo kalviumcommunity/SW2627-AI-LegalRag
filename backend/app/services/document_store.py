@@ -25,7 +25,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.db.models import Chunk, Document
-from app.schemas.documents import DocumentChunk, IngestResponse
+from app.schemas.documents import (
+    DocumentChunk,
+    DocumentChunkSummary,
+    DocumentDetailResponse,
+    DocumentSummary,
+    IngestResponse,
+)
 from app.services.storage_errors import (
     DatabaseConfigurationError,
     DatabaseSchemaError,
@@ -146,7 +152,7 @@ def verify_vector_schema(engine: Engine, settings: Settings) -> int:
 
 
 class DocumentStore(Protocol):
-    """Persistence interface consumed by the ingestion service."""
+    """Persistence interface consumed by ingestion and document management."""
 
     def ensure_ready(self) -> None: ...
 
@@ -161,6 +167,30 @@ class DocumentStore(Protocol):
         embeddings: list[list[float]],
     ) -> IngestResponse: ...
 
+    def get_document(
+        self, document_id: str
+    ) -> DocumentDetailResponse | None: ...
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        source_type: str | None = None,
+    ) -> tuple[list[DocumentSummary], int]: ...
+
+    def get_document_chunks(
+        self,
+        document_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        include_text: bool = False,
+    ) -> tuple[list[DocumentChunkSummary], int] | None: ...
+
+    def delete_document(self, document_id: str) -> bool: ...
+
 
 class UnavailableDocumentStore:
     """Store used when no DATABASE_URL is configured."""
@@ -168,7 +198,7 @@ class UnavailableDocumentStore:
     def ensure_ready(self) -> None:
         raise DatabaseConfigurationError(
             "Persistence is not configured. Set DATABASE_URL and run "
-            "`alembic upgrade head` before ingesting documents."
+            "`alembic upgrade head` before managing or ingesting documents."
         )
 
     def find_by_content_hash(
@@ -185,6 +215,38 @@ class UnavailableDocumentStore:
     ) -> IngestResponse:
         self.ensure_ready()
         return response
+
+    def get_document(
+        self, document_id: str
+    ) -> DocumentDetailResponse | None:
+        self.ensure_ready()
+        return None
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        source_type: str | None = None,
+    ) -> tuple[list[DocumentSummary], int]:
+        self.ensure_ready()
+        return [], 0
+
+    def get_document_chunks(
+        self,
+        document_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        include_text: bool = False,
+    ) -> tuple[list[DocumentChunkSummary], int] | None:
+        self.ensure_ready()
+        return None
+
+    def delete_document(self, document_id: str) -> bool:
+        self.ensure_ready()
+        return False
 
 
 class SqlAlchemyDocumentStore:
@@ -332,6 +394,166 @@ class SqlAlchemyDocumentStore:
             raise DatabaseWriteError(
                 "The document could not be stored; no records were committed."
             ) from exc
+
+    def get_document(self, document_id: str) -> DocumentDetailResponse | None:
+        self.ensure_ready()
+        try:
+            with self._get_session_factory()() as session:
+                document = (
+                    session.query(Document)
+                    .filter(Document.id == document_id)
+                    .one_or_none()
+                )
+                if document is None:
+                    return None
+                return DocumentDetailResponse(
+                    document_id=document.id,
+                    filename=document.filename,
+                    source_type=document.source_type,
+                    status=document.status,
+                    content_sha256=document.content_sha256,
+                    extracted_characters=document.extracted_characters,
+                    chunk_count=document.chunk_count,
+                    page_count=document.page_count,
+                    warnings=list(document.warnings or []),
+                    detail=document.detail,
+                    created_at=document.created_at,
+                    updated_at=document.updated_at,
+                )
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(
+                "The database is unavailable."
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DatabaseWriteError(
+                "The stored document could not be read."
+            ) from exc
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        source_type: str | None = None,
+    ) -> tuple[list[DocumentSummary], int]:
+        self.ensure_ready()
+        try:
+            with self._get_session_factory()() as session:
+                query = session.query(Document)
+                if status is not None:
+                    query = query.filter(Document.status == status)
+                if source_type is not None:
+                    query = query.filter(Document.source_type == source_type)
+                total = query.count()
+                documents = (
+                    query.order_by(Document.created_at.desc(), Document.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                items = [
+                    DocumentSummary(
+                        document_id=doc.id,
+                        filename=doc.filename,
+                        source_type=doc.source_type,
+                        status=doc.status,
+                        extracted_characters=doc.extracted_characters,
+                        chunk_count=doc.chunk_count,
+                        page_count=doc.page_count,
+                        warnings=list(doc.warnings or []),
+                        detail=doc.detail,
+                        created_at=doc.created_at,
+                        updated_at=doc.updated_at,
+                    )
+                    for doc in documents
+                ]
+                return items, total
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(
+                "The database is unavailable."
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DatabaseWriteError(
+                "Documents could not be listed."
+            ) from exc
+
+    def get_document_chunks(
+        self,
+        document_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        include_text: bool = False,
+    ) -> tuple[list[DocumentChunkSummary], int] | None:
+        self.ensure_ready()
+        try:
+            with self._get_session_factory()() as session:
+                doc_exists = (
+                    session.query(Document.id)
+                    .filter(Document.id == document_id)
+                    .scalar_one_or_none()
+                )
+                if doc_exists is None:
+                    return None
+                chunk_query = session.query(Chunk).filter(
+                    Chunk.document_id == document_id
+                )
+                total = chunk_query.count()
+                chunks = (
+                    chunk_query.order_by(Chunk.chunk_index.asc())
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                items = [
+                    DocumentChunkSummary(
+                        chunk_id=chunk.id,
+                        document_id=chunk.document_id,
+                        chunk_index=chunk.chunk_index,
+                        source_filename=chunk.source_filename,
+                        source_type=chunk.source_type,
+                        page_number=chunk.page_number,
+                        start_offset=chunk.start_offset,
+                        end_offset=chunk.end_offset,
+                        metadata=dict(chunk.chunk_metadata or {}),
+                        text=chunk.text if include_text else None,
+                    )
+                    for chunk in chunks
+                ]
+                return items, total
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(
+                "The database is unavailable."
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DatabaseWriteError(
+                "Document chunks could not be read."
+            ) from exc
+
+    def delete_document(self, document_id: str) -> bool:
+        self.ensure_ready()
+        try:
+            with self._get_session_factory()() as session:
+                with session.begin():
+                    doc = (
+                        session.query(Document)
+                        .filter(Document.id == document_id)
+                        .one_or_none()
+                    )
+                    if doc is None:
+                        return False
+                    session.delete(doc)
+                return True
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(
+                "The database is unavailable."
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DatabaseWriteError(
+                "The document could not be deleted."
+            ) from exc
+
 
 
 def _source_type_for(response: IngestResponse) -> str:

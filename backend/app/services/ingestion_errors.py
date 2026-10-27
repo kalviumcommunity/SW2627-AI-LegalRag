@@ -47,3 +47,16 @@ class DocumentStorageError(DocumentIngestionError):
     """Secure temporary storage failed."""
 
     status_code = 500
+
+
+class DocumentNotFoundError(DocumentIngestionError):
+    """The requested document was not found."""
+
+    status_code = 404
+
+
+class DocumentIdentifierError(DocumentValidationError):
+    """The provided document identifier is invalid."""
+
+    status_code = 422
+

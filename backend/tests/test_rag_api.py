@@ -177,3 +177,54 @@ def test_openapi_documents_the_rag_endpoint():
     assert f"{settings.api_prefix}/rag/ask" in schema["paths"]
     operation = schema["paths"][f"{settings.api_prefix}/rag/ask"]["post"]
     assert "grounded" in operation["summary"].lower()
+    # Also verify Phase 6 document management routes are documented in OpenAPI
+    assert f"{settings.api_prefix}/documents" in schema["paths"]
+    assert f"{settings.api_prefix}/documents/{{document_id}}" in schema["paths"]
+    assert f"{settings.api_prefix}/documents/{{document_id}}/chunks" in schema["paths"]
+
+
+def test_rag_ask_with_document_id_filter():
+    settings = _settings()
+    service = _FakeRAGService()
+    client = _client(service)
+
+    response = _ask(
+        client,
+        settings,
+        {
+            "question": "What is the mortgage status?",
+            "document_id": "doc_mortgage_42",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.calls[0][1]["document_id"] == "doc_mortgage_42"
+
+
+def test_rag_ask_returns_no_relevant_sources():
+    settings = _settings()
+    no_source_response = _response(
+        answer="I could not find relevant information in the provided property documents.",
+        evidence_status="no_relevant_sources",
+        citations=[],
+        retrieved_count=0,
+        used_chunk_count=0,
+    )
+    service = _FakeRAGService(response=no_source_response)
+    client = _client(service)
+
+    response = _ask(
+        client,
+        settings,
+        {
+            "question": "What is the zoning law?",
+            "document_id": "doc_nonexistent",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["evidence_status"] == "no_relevant_sources"
+    assert body["citations"] == []
+    assert body["retrieved_count"] == 0
+

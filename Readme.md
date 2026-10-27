@@ -1,9 +1,10 @@
-# Property Intelligence Platform — Phases 1–4 (Sprint 2)
+# Property Intelligence Platform — Phases 1–6 (Sprint 2)
 
 AI-powered Real Estate Property Intelligence Platform. Buyers currently cannot get
 trustworthy, consolidated answers about a property without manually cross-checking
-listings, legal documents, and locality reports. The full platform will add document
-processing, embeddings, vector retrieval, and RAG-grounded reports.
+listings, legal documents, and locality reports. The platform integrates document
+ingestion, chunking, embeddings, vector retrieval, grounded RAG answer generation,
+and document lifecycle management.
 
 **Phase 1:** a tested FastAPI foundation — centralized configuration, health/readiness
 endpoints, and a general (non-RAG) LLM chat endpoint backed by Groq. Chat answers are
@@ -19,16 +20,34 @@ text, ordering, page references, offsets, metadata, and vectors. A successful in
 response is returned only after the database transaction commits. Identical re-uploads
 are idempotent and return the previously stored document.
 
-**Phase 4 (this implementation):** semantic retrieval of stored chunks by natural-
-language query, configurable top-K, metadata-filtered search, optional cosine-
-similarity thresholds, and hybrid semantic + PostgreSQL full-text retrieval fused with
-reciprocal rank fusion (RRF). `POST /api/v1/retrieval/search` returns ranked chunks
-with source metadata for future citations. A reproducible synthetic evaluation corpus
-and Hit@K / Recall@K / Precision@K / MRR metrics are included.
+**Phase 4:** semantic retrieval of stored chunks by natural-language query,
+configurable top-K, metadata-filtered search, optional cosine-similarity thresholds,
+and hybrid semantic + PostgreSQL full-text retrieval fused with reciprocal rank fusion
+(RRF). `POST /api/v1/retrieval/search` returns ranked chunks with source metadata.
 
-Phase 4 does **not** generate answers from retrieved chunks, build RAG context,
-format citations, add conversational memory, stream responses, add a chat UI, run OCR,
-rerank results, or deploy the application. Those belong to later phases.
+**Phase 5:** end-to-end grounded RAG pipeline exposed through `POST /api/v1/rag/ask`.
+Connects Phase 4 retrieval with weak-evidence filtering, overlap-aware bounded context
+construction, nonce-delimited evidence blocks, strict grounded system prompting,
+post-generation citation validation, and explicit evidence-status reporting (`supported`,
+`insufficient_evidence`, `conflicting_evidence`, `no_relevant_sources`). Answers
+reference verifiable citations (`[S1]`, `[S2]`) tied directly to retrieved chunks and
+stored document records. The citation guarantee covers retrieved-source integrity only;
+claim-level entailment is explicitly **not** verified.
+
+**Phase 6 (this implementation):** document management APIs and lifecycle workflows
+built on the validated Phase 2–5 foundations:
+- `POST /api/v1/documents/ingest`: upload, extract, chunk, embed, and persist property documents.
+- `GET /api/v1/documents`: paginated document listing with status and source format filtering.
+- `GET /api/v1/documents/{document_id}`: document metadata and processing status retrieval.
+- `GET /api/v1/documents/{document_id}/chunks`: paginated chunk metadata inspection with
+  content protection (`include_text` parameter).
+- `DELETE /api/v1/documents/{document_id}`: transactional document deletion with cascading
+  removal of associated chunks and embeddings.
+- Grounded RAG integration (`POST /api/v1/rag/ask`) supporting document-level filtering
+  (`document_id`), citation preservation, and safe empty/unindexed handling.
+
+Phase 6 single-question RAG and document APIs do **not** include conversational memory,
+streaming, a frontend UI, OCR, or autonomous legal verification.
 
 ## Repository layout
 
@@ -50,17 +69,20 @@ rerank results, or deploy the application. Those belong to later phases.
     │   │   ├── health.py              # GET /health, GET /ready
     │   │   ├── llm.py                 # POST /llm/chat
     │   │   ├── documents.py           # POST /documents/ingest
-    │   │   └── retrieval.py           # POST /retrieval/search
+    │   │   ├── retrieval.py           # POST /retrieval/search
+    │   │   └── rag.py                 # POST /rag/ask
     │   ├── core/
-    │   │   ├── config.py              # Pydantic Settings (LLM, ingestion, retrieval)
-    │   │   └── prompt.py              # Phase 1 system prompt
+    │   │   ├── config.py              # Pydantic Settings (LLM, ingestion, retrieval, RAG)
+    │   │   ├── prompt.py              # Phase 1 chat system prompt
+    │   │   └── rag_prompt.py          # Phase 5 grounded RAG system prompt & template
     │   ├── db/
     │   │   ├── base.py                # SQLAlchemy declarative base
     │   │   └── models.py              # documents / chunks / pgvector / FTS indexes
     │   ├── schemas/
     │   │   ├── llm.py                 # ChatRequest / ChatResponse
     │   │   ├── documents.py           # DocumentChunk / IngestResponse
-    │   │   └── retrieval.py           # retrieval request/response/filter schemas
+    │   │   ├── retrieval.py           # retrieval request/response/filter schemas
+    │   │   └── rag.py                 # RAGQuestionRequest / RAGResponse / RAGCitation
     │   └── services/
     │       ├── llm_service.py         # Groq (OpenAI-compatible) wrapper
     │       ├── document_validation.py # filename/MIME/signature/size checks
@@ -76,12 +98,22 @@ rerank results, or deploy the application. Those belong to later phases.
     │       ├── retrieval_errors.py    # safe retrieval error types
     │       ├── retrieval_store.py     # pgvector cosine + PostgreSQL full-text SQL
     │       ├── retrieval_service.py   # validation, embedding, ranking, RRF fusion
-    │       └── retrieval_evaluation.py # Hit@K / Recall@K / Precision@K / MRR
+    │       ├── retrieval_evaluation.py # Hit@K / Recall@K / Precision@K / MRR
+    │       ├── rag_context.py         # bounded, nonce-delimited evidence context
+    │       ├── rag_errors.py          # safe API-facing RAG error types
+    │       ├── evidence_conflict.py   # conservative conflict/verbatim claim checks
+    │       ├── rag_service.py         # RAG orchestration, weak-evidence and citation policy
+    │       └── rag_evaluation.py      # citation integrity + status/retrieval metrics
     ├── evaluation/
     │   ├── retrieval_dataset.json     # synthetic grounded corpus + questions
+    │   ├── rag_dataset.json           # synthetic corpus + RAG evaluation questions
+    │   ├── last_run.json              # Phase 4 retrieval evaluation results
+    │   ├── rag_last_run.json          # Phase 5 offline harness results
+    │   ├── rag_harness.py             # deterministic, non-circular RAG harness
     │   └── dataset.py                 # load/validate/materialize evaluation corpus
     ├── scripts/
-    │   └── evaluate_retrieval.py      # reproducible evaluation runner
+    │   ├── evaluate_retrieval.py      # reproducible retrieval evaluation runner
+    │   └── evaluate_rag.py            # reproducible RAG pipeline evaluation runner
     ├── tests/
     │   ├── conftest.py                # settings isolation + database fixtures
     │   ├── fakes.py                   # mocked providers + in-memory stores
@@ -96,7 +128,13 @@ rerank results, or deploy the application. Those belong to later phases.
     │   ├── test_retrieval_service.py
     │   ├── test_retrieval_api.py
     │   ├── test_retrieval_integration.py  # requires TEST_DATABASE_URL
-    │   └── test_retrieval_evaluation.py
+    │   ├── test_retrieval_evaluation.py
+    │   ├── test_rag_context.py
+    │   ├── test_rag_service.py
+    │   ├── test_rag_api.py
+    │   ├── test_rag_evaluation.py
+    │   ├── test_evidence_conflict.py
+    │   └── test_rag_integration.py     # requires TEST_DATABASE_URL
     ├── requirements.txt
     ├── pytest.ini
     ├── .env.example                   # placeholder values only, never real secrets
@@ -324,17 +362,23 @@ Interactive docs (dev server): `http://127.0.0.1:8000/docs`
 
 Endpoints (all under `API_PREFIX`, default `/api/v1`):
 
-- `GET /api/v1/health` → liveness only; never calls the LLM, embedding provider, or DB.
-- `GET /api/v1/ready` → configuration flags for the LLM, embedding provider/model/
-  dimensions, database, and retrieval defaults. No paid calls or model downloads.
-- `POST /api/v1/llm/chat` with `{"message": "..."}` → `{"answer": "..."}`.
-  Empty/whitespace messages → 422; over-length → 422; missing API key → 503;
-  rate limit → 429; timeout → 504; auth/upstream failure → 502.
-  Error responses contain safe messages only (no stack traces, no secrets).
+- `GET /api/v1/health` → liveness check; never calls the LLM, embedding provider, or DB.
+- `GET /api/v1/ready` → configuration readiness flags for the LLM, embedding provider/model/
+  dimensions, database, and retrieval defaults.
+- `POST /api/v1/llm/chat` with `{"message": "..."}` → general chat answer (non-RAG).
 - `POST /api/v1/documents/ingest` → validate, extract, clean, chunk, embed, and persist
-  a document (Phases 2–3; response below).
+  a property document (multipart upload).
+- `GET /api/v1/documents` → paginated document summaries with optional `status` and
+  `source_type` filters.
+- `GET /api/v1/documents/{document_id}` → retrieve document metadata and processing status.
+- `GET /api/v1/documents/{document_id}/chunks` → paginated chunk metadata inspection with
+  content protection (`include_text` parameter).
+- `DELETE /api/v1/documents/{document_id}` → delete a document and cascade-delete its chunks
+  and embeddings.
 - `POST /api/v1/retrieval/search` → semantic or hybrid ranked chunk retrieval with
-  optional metadata filters (Phase 4; details below).
+  metadata filters (Phase 4).
+- `POST /api/v1/rag/ask` → grounded RAG answer from retrieved document excerpts with
+  validated citations and evidence-status reporting (Phase 5).
 
 ## Retrieval (Phase 4)
 
@@ -733,6 +777,15 @@ docker exec property-intel-pg psql -U property -d property_intelligence \
 curl -X POST http://127.0.0.1:8000/api/v1/retrieval/search \
   -H "Content-Type: application/json" \
   -d '{"query": "What property documents are available?", "top_k": 3, "mode": "semantic"}'
+
+# 6. Ask a grounded question via Phase 5 RAG.
+curl -X POST http://127.0.0.1:8000/api/v1/rag/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Who is the registered owner of the property and what was the sale consideration?",
+    "top_k": 3,
+    "mode": "hybrid"
+  }'
 ```
 
 A successful HTTP 200 means the rows above exist. Restarting the API does not remove
@@ -740,10 +793,255 @@ them. Re-uploading the identical file returns the same `document_id` and creates
 duplicate rows. Stopping the database before ingestion or retrieval produces a safe
 HTTP 503.
 
+## Phase 6: Document Management & Lifecycle Workflows
+
+Phase 6 introduces complete document lifecycle management, allowing clients to list
+ingested documents, inspect document metadata and processing statuses, view chunk
+metadata with optional content protection, and delete documents with transactional
+cascade cleanup.
+
+### Endpoints and Operations
+
+#### 1. Ingest Document
+`POST /api/v1/documents/ingest`
+- Accepts multipart file upload (`.pdf`, `.txt`, `.md`).
+- Validates file type, MIME, magic signature, and size limit (`DOCUMENT_MAX_UPLOAD_BYTES`).
+- Extracts text page-by-page, cleans conservatively, and generates overlapping chunks.
+- Checks SHA-256 content hash for idempotent re-uploads (prevents duplicate vectors).
+- Generates embeddings and persists document and chunks in a single transaction.
+- Returns `IngestResponse` with `document_id`, `status` (`processed` or `ocr_required`),
+  and chunk details.
+
+#### 2. List Documents (Paginated)
+`GET /api/v1/documents?page=1&page_size=20&status=processed&source_type=pdf`
+- Returns paginated `DocumentListResponse` with lightweight `DocumentSummary` items.
+- Avoids returning full chunk contents or large text payloads.
+- Supports optional filtering by `status` (`processed`, `ocr_required`) and `source_type`
+  (`pdf`, `txt`, `markdown`).
+- Includes pagination metadata: `total`, `page`, `page_size`, `total_pages`.
+
+```json
+{
+  "items": [
+    {
+      "document_id": "doc_9f8e7d6c5b4a",
+      "filename": "sale_deed.pdf",
+      "source_type": "pdf",
+      "status": "processed",
+      "extracted_characters": 12500,
+      "chunk_count": 4,
+      "page_count": 3,
+      "warnings": [],
+      "detail": null,
+      "created_at": "2026-10-27T04:00:00Z",
+      "updated_at": "2026-10-27T04:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1
+}
+```
+
+#### 3. Get Document Metadata & Status
+`GET /api/v1/documents/{document_id}`
+- Retrieves detailed document metadata, content hash (`content_sha256`), chunk count,
+  and processing status without returning chunk contents.
+- Returns HTTP 404 if the document does not exist.
+- Validates document identifier format safely.
+
+#### 4. Inspect Document Chunks (Paginated)
+`GET /api/v1/documents/{document_id}/chunks?page=1&page_size=20&include_text=false`
+- Retrieves chunk metadata for inspection (`chunk_id`, `chunk_index`, page numbers,
+  character offsets, and chunking parameters).
+- **Content Protection:** `include_text` defaults to `false` to avoid returning complete
+  legal document text when metadata inspection is sufficient. Set `include_text=true`
+  to include chunk text.
+- Returns HTTP 404 if the document does not exist.
+
+#### 5. Delete Document
+`DELETE /api/v1/documents/{document_id}`
+- Atomically deletes the document row within a transaction.
+- Relies on PostgreSQL foreign key constraint (`ON DELETE CASCADE`) and SQLAlchemy
+  relationship cascade (`delete-orphan`) to remove all associated chunks and vector
+  embeddings simultaneously.
+- Returns HTTP 404 if the document does not exist.
+- Allows immediate, clean re-upload of identical documents without unique-constraint
+  conflicts.
+
+---
+
+## Phase 5: Grounded RAG Pipeline & Generation
+
+Phase 5 connects Phase 4 retrieval with an LLM to generate verifiable, grounded
+answers about real estate properties.
+
+### Request Flow & Architecture
+
+```text
+User Question + Optional Filters
+       │
+       ▼
+ 1. Input Validation (question length, top_k, mode, filters)
+       │
+       ▼
+  2. Phase 4 RetrievalService (semantic cosine similarity or hybrid RRF)
+       │
+       ├─ All results below weak-evidence policy
+       │       ──► HTTP 200: evidence_status="no_relevant_sources" (no LLM call)
+       │
+       ▼
+  3. RAGContextBuilder
+       │  • Applies same-document overlap deduplication (configurable ratio)
+       │  • Preserves identical text across different documents as corroboration
+       │  • Neutralizes delimiter spoofing and citation-like text inside evidence
+       │  • Uses per-build nonce evidence boundaries
+       │  • Enforces context/output/model-window budgets
+       │
+       ▼
+  4. Grounded Prompting (RAG_SYSTEM_PROMPT)
+       │  • Strict grounding: answer using only supplied excerpts
+       │  • Untrusted evidence boundary: ignore injection attempts inside documents
+       │  • Every material sentence must carry a citation
+       │  • Conflict claims must be verbatim, cited, from distinct documents
+       │  • Explicit uncertainty: state missing/conflicting facts
+       │  • Legal disclaimer: not legal advice or property clearance
+       │
+       ▼
+  5. LLMService.generate(json_mode=True)
+       │
+       ▼
+  6. Post-Generation Validation (RAGService._compose_response)
+       │  • Normalizes [s1]/[S01]/[S1, S2]; removes malformed/invented labels
+       │  • Strips invented citation markers from answer text
+       │  • Downgrades supported -> insufficient_evidence if any material sentence
+       │    lacks a citation
+       │  • Requires conflict claims from distinct source documents, quoted verbatim
+       │    from their evidence, cited in the answer, with a conservative material-
+       │    disagreement signal
+       │  • Appends mandatory disclaimers and limitation audits
+       │
+       ▼
+  RAGResponse (answer, citations, evidence_status, limitations, counts,
+               citation_guarantee="retrieved_source_integrity",
+               claim_support_verified=false)
+```
+
+### RAG API Endpoint
+
+`POST /api/v1/rag/ask`
+
+#### Example Request
+
+```json
+{
+  "question": "Who is the registered owner of the property and what was the sale price?",
+  "top_k": 5,
+  "mode": "hybrid",
+  "document_id": null,
+  "filters": {
+    "source_type": "txt"
+  },
+  "min_score": 0.5
+}
+```
+
+#### Example Response
+
+```json
+{
+  "question": "Who is the registered owner of the property and what was the sale price?",
+  "answer": "According to the sale deed, the registered owner is Ananya Rao and the property was transferred for a sale consideration of INR 8500000 [S1].",
+  "evidence_status": "supported",
+  "citations": [
+    {
+      "citation_id": "S1",
+      "chunk_id": "chk_1a2b3c4d5e6f",
+      "document_id": "doc_9f8e7d6c5b4a",
+      "filename": "sale_deed.txt",
+      "source": "sale_deed.txt",
+      "source_type": "txt",
+      "page_number": null,
+      "page_numbers": [],
+      "chunk_index": 0,
+      "excerpt": "This sale deed records that the registered owner is Ananya Rao and that the title to the property is free from encumbrance... sale consideration of INR 8500000.",
+      "document_created_at": "2025-01-15T10:30:00Z"
+    }
+  ],
+  "limitations": [
+    "Verified against supplied documents only.",
+    "Citations confirm that a source was retrieved; they do not establish claim-level entailment or legal verification.",
+    "This answer is limited to the retrieved excerpts and is not legal advice or a property clearance."
+  ],
+  "retrieved_count": 1,
+  "used_chunk_count": 1,
+  "mode": "hybrid",
+  "citation_guarantee": "retrieved_source_integrity",
+  "claim_support_verified": false
+}
+```
+
+### Evidence Status Definitions
+
+- `supported`: The question is directly answered by the retrieved document excerpts, and every material answer sentence carries at least one valid citation (`[S1]`, `[S2]`). This is a structural check; it does not prove that each sentence is entailed by the cited chunk.
+- `insufficient_evidence`: The retrieved documents do not contain sufficient facts to answer the question, the model did not cite every material sentence, or a claimed conflict could not be validated.
+- `conflicting_evidence`: Multiple distinct retrieved documents materially disagree on a factual point (e.g., an encumbrance certificate claiming no loans vs. an active bank mortgage notice). Requires at least two cited, verbatim conflict claims from distinct `document_id`s and a conservative disagreement signal (opposite polarity on a shared subject, a numeric mismatch, or an explicit antonym pair).
+- `no_relevant_sources`: Retrieval returned zero candidate chunks meeting the query, filter, and weak-evidence policy. Bypasses the LLM entirely and returns a safe, deterministic explanation.
+
+### Context Budgeting & Token Management
+
+Context construction is governed by conservative settings in `Settings`:
+- `RAG_MAX_QUESTION_CHARS`: 2000 chars (capped input length).
+- `RAG_CONTEXT_MAX_TOKENS`: 4000 tokens (estimated via `rag_chars_per_token=4.0` and `rag_token_safety_factor=1.2`).
+- `RAG_MAX_OUTPUT_TOKENS`: 1024 tokens reserved strictly for the generated answer.
+- `RAG_MAX_EVIDENCE_CHUNKS`: 8 chunks maximum.
+- `RAG_MAX_EVIDENCE_CHARS`: 8000 chars total evidence budget.
+- `RAG_MAX_EVIDENCE_CHUNK_CHARS`: 1600 chars per chunk (overlong chunks are safely truncated).
+- `RAG_MAX_EXCERPT_CHARS`: 280 chars per citation excerpt.
+- `RAG_MIN_SEMANTIC_SCORE`: 0.35 semantic floor for weak-evidence filtering.
+- `RAG_MAX_KEYWORD_ONLY_RANK`: 20 (hybrid keyword-only results at or above this rank may pass).
+- `RAG_OVERLAP_DEDUP_RATIO`: 0.5 same-document character-range overlap threshold.
+- `RAG_MODEL_CONTEXT_TOKENS`: 32768 conservative model context window. Settings validation
+  requires `RAG_CONTEXT_MAX_TOKENS + RAG_MAX_OUTPUT_TOKENS` not to exceed this value.
+
+### RAG Pipeline Evaluation
+
+A synthetic evaluation corpus with grounded, conflicting, insufficient, and unanswerable
+queries is located at `backend/evaluation/rag_dataset.json`.
+
+`backend/evaluation/rag_harness.py` is a deterministic **offline regression harness**, not
+a live model-quality benchmark. It exercises the real `RetrievalService` and `RAGService`
+with local lexical-hash embeddings, an in-memory retrieval store, and an extractive fake
+LLM that reads only the supplied evidence. It does not import `tests.fakes`, seed expected
+statuses into the pipeline, or assess claim-level entailment.
+
+Run it with:
+
+```bash
+cd backend
+python scripts/evaluate_rag.py --output evaluation/rag_last_run.json
+```
+
+Current offline harness results:
+- **Total Queries Evaluated:** 9
+- **Status Accuracy:** 88.9% (8/9)
+- **Retrieval Success Rate:** 77.8% (7/9)
+- **Citation Validity Rate:** 100.0% (7/7 citations structurally valid)
+- **Citation Integrity Rate:** 100.0% (9/9)
+- **Claim-Support Assessment:** NOT ASSESSED
+
+The one status mismatch is `missing_warranty_terms`: the harness returns
+`no_relevant_sources` where the labelled expectation is `insufficient_evidence`. This is
+reported rather than hidden. The harness's extractive conflict finder and the RAG
+validator share the same rule-based helper, so the conflict case measures orchestration
+and grounding rather than independent contradiction-detection accuracy; the helper also
+has direct unit tests. The harness does not demonstrate live Groq answer quality.
+
 ## Verification
 
 The suite covers Phase 1 health/LLM contracts, Phase 2 validation/extraction/cleaning/
-chunking, Phase 3 embedding/persistence, and Phase 4 retrieval:
+chunking, Phase 3 embedding/persistence, Phase 4 retrieval, and Phase 5 grounded RAG:
 
 - embedding order, batching, empty input, normalization, malformed/non-finite/wrong-
   dimension vectors, provider failures, timeouts, rate limits, and mocked OpenAI errors;
@@ -753,59 +1051,49 @@ chunking, Phase 3 embedding/persistence, and Phase 4 retrieval:
 - retrieval query validation, default/max top-K, cosine score mapping, deterministic
   ordering, duplicate-free RRF fusion, metadata/page filters, min-score thresholds,
   provider/database failure mappings, and response metadata;
-- evaluation formulas including missing evidence, duplicate results, partial recall,
-  empty result sets, and invalid cutoffs;
-- end-to-end ingestion and retrieval through the API with mocked providers and a real
-  PostgreSQL/pgvector test database.
+- RAG orchestration, weak-evidence filtering, bounded/nonce-delimited context construction,
+  overlap and cross-document deduplication behavior, citation normalization and mapping,
+  material-sentence citation enforcement, distinct-document/verbatim conflict validation,
+  safe error masking without secret/prompt leakage, and FastAPI endpoint contracts;
+- deterministic offline RAG harness with separate citation-integrity and claim-support
+  reporting, plus citation audit validators;
+- end-to-end ingestion, retrieval, and RAG through the API with mocked providers;
+- DB-backed RAG citation and conflict tests (skipped unless `TEST_DATABASE_URL` is set).
 
 ```bash
 cd backend
-pytest -q                     # 162 passed, 25 skipped (no TEST_DATABASE_URL)
+pytest -q                     # 256 passed, 29 skipped (no TEST_DATABASE_URL)
 ```
 
-With a dedicated pgvector test database:
-
-```bash
-export TEST_DATABASE_URL='postgresql+psycopg://property:property_dev_password@127.0.0.1:5433/property_intelligence_test'
-pytest -q                     # 187 passed
-```
-
-Verified results for this implementation: **162 passed / 25 skipped** without a test
-database and **187 passed** with PostgreSQL/pgvector. A real HTTP retrieval call using
-the default local model returned the expected sale-deed chunk first, and page filtering
-matched a two-page chunk through `metadata.page_numbers`. The evaluation runner was also
-executed against a real pgvector database with the local embedding model. No automated
-test calls a paid embedding or LLM API.
+The 29 skipped tests are dedicated PostgreSQL/pgvector integration tests that run when
+`TEST_DATABASE_URL` is set. All 256 unit and mocked integration tests run completely
+offline without external services or paid API calls.
 
 ## Current limitations and deferred work
 
-- RAG context construction, grounded answer generation, citations/quotations,
-  hallucination guardrails, conversational memory, streaming, and a chat UI are **not
-  implemented** (Phase 5+).
-- Retrieval filters are document/chunk-level only. There is no property entity or
-  `property_id` association yet, so property-level filtering requires a schema change.
-- No reranking or relevance optimization beyond optional similarity thresholds and
-  hybrid RRF; no learned fusion weights.
-- Hybrid keyword search is English-only (`to_tsvector('english', text)`).
-- No pagination/cursor API; responses are capped by `RETRIEVAL_MAX_TOP_K`.
-- No frontend/dashboard, authentication/authorization, deployment configuration, or
-  background job queue.
-- No OCR: image-only PDFs are persisted as `ocr_required` with zero chunks.
-- Failed extraction attempts are not persisted; only `processed` and `ocr_required`
-  document records exist.
-- Re-ingestion is idempotent for identical bytes + filename only. There is no update/
-  replacement API, version history, or deletion endpoint.
-- The vector dimension is fixed at 768 by the initial migration. A different model
-  dimension requires a new migration and re-embedding existing chunks.
-- The local model downloads on first use; a network/cache failure returns HTTP 502.
-  Very long texts may be truncated by the model's own token limit.
-- No task prefix is added for the default Nomic model; retrieval still works, but
-  document/query prefixes may improve quality.
-- HNSW parameters (`m`, `ef_construction`, query-time `hnsw.ef_search`) and RRF weights
-  have not been tuned or benchmarked. The evaluation corpus has only six chunks, so
-  Hit@K/Recall@K saturate and precision is depressed; the numbers validate the pipeline,
-  not production quality.
-- Database writes, embeddings, and retrieval run synchronously in a worker thread;
-  throughput is adequate for development but no load/performance testing was performed.
-- The OpenAI-compatible embedding provider is covered by mocked unit tests but was not
-  exercised against a live paid API.
+- **Property-to-document associations:** Properties and property-to-document relationships
+  are not currently part of the database schema (`Document` and `Chunk` records exist
+  without a `Property` entity). Property-specific intelligence consolidation requires a
+  validated property entity schema in a subsequent phase. Document filtering is currently
+  performed strictly at the document level (`document_id`, filename, format).
+- **Authentication and document access control:** Authentication and document ownership
+  are not implemented in this phase. This is an explicit deployment-readiness gap; the
+  APIs must not be exposed to untrusted public networks under the assumption that
+  client-supplied document IDs provide authorization.
+- **Single-question scope:** Conversational memory, chat session history, and multi-turn
+  dialogue management are deferred to future phases.
+- **No streaming answers:** Responses are returned as a complete JSON payload.
+- **Claim-level factual entailment:** Citations and excerpts are validated against source
+  chunks (metadata mapping, source ID existence, verbatim conflict quotes), and supported
+  answers require citations on every material sentence. A formal natural-language-inference
+  (NLI) entailment model is not implemented; `claim_support_verified` is always `false`.
+- **Conflict detection is conservative and rule-based:** It can miss real disagreements
+  (false negatives), which downgrade to `insufficient_evidence`; it is not a general
+  contradiction model.
+- **Evaluation is offline and deterministic:** The harness measures regression behavior,
+  retrieval labels, and structural citation integrity. It does not measure live LLM answer
+  quality or claim-level correctness.
+- **No OCR:** Image-only scanned PDFs are marked `ocr_required` with zero chunks.
+- **Synchronous worker threads:** Ingestion and retrieval run in background worker
+  threads; production high-throughput deployments will benefit from an asynchronous
+  task queue (e.g. Celery / ARQ).
