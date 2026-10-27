@@ -53,7 +53,7 @@ def get_shared_engine(settings: Settings) -> Engine:
     Shared by ingestion and retrieval so both use the same connection limits
     and schema verification without building separate pools per request.
     """
-    url = (settings.database_url or "").strip()
+    url = settings.get_database_url(direct=False)
     if not url:
         raise DatabaseConfigurationError(
             "Persistence is not configured. Set DATABASE_URL "
@@ -149,6 +149,88 @@ def verify_vector_schema(engine: Engine, settings: Settings) -> int:
             "for the new model dimensions before storing or retrieving chunks."
         )
     return dimension
+
+
+def verify_database_connectivity(settings: Settings) -> dict[str, Any]:
+    """Execute a comprehensive, safe verification of database connectivity and schema.
+
+    Returns structured verification results without exposing credentials.
+    """
+    url = settings.get_database_url(direct=False)
+    if not url:
+        return {
+            "status": "unconfigured",
+            "message": "DATABASE_URL is not configured.",
+        }
+
+    from urllib.parse import urlsplit
+    parts = urlsplit(url)
+    hostname = parts.hostname or ""
+    is_neon = "neon.tech" in hostname
+    is_pooled = "-pooler" in hostname
+
+    report: dict[str, Any] = {
+        "is_neon": is_neon,
+        "is_pooled": is_pooled,
+        "simple_query": False,
+        "pgvector_installed": False,
+        "pgvector_version": None,
+        "tables_exist": False,
+        "tables": [],
+        "embedding_dimensions": None,
+        "indexes_verified": False,
+        "status": "error",
+    }
+
+    try:
+        engine = get_shared_engine(settings)
+        with engine.connect() as conn:
+            # 1. Simple query
+            res = conn.execute(text("SELECT 1")).scalar()
+            report["simple_query"] = bool(res == 1)
+
+            # 2. Check pgvector extension
+            ext_row = conn.execute(
+                text("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'")
+            ).fetchone()
+            if ext_row:
+                report["pgvector_installed"] = True
+                report["pgvector_version"] = ext_row[1]
+
+            # 3. Check tables
+            tables = conn.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+            ).scalars().all()
+            report["tables"] = tables
+            report["tables_exist"] = "documents" in tables and "chunks" in tables
+
+            # 4. Check indexes on chunks
+            if "chunks" in tables:
+                indexes = conn.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename = 'chunks'")
+                ).scalars().all()
+                report["indexes_verified"] = (
+                    "ix_chunks_embedding_hnsw" in indexes and "ix_chunks_text_fts" in indexes
+                )
+
+        # 5. Check vector schema dimension compatibility
+        dim = verify_vector_schema(engine, settings)
+        report["embedding_dimensions"] = dim
+
+        if report["simple_query"] and report["pgvector_installed"] and report["tables_exist"] and report["indexes_verified"]:
+            report["status"] = "healthy"
+            report["message"] = "Neon PostgreSQL connection, pgvector extension, and schema verified successfully."
+        else:
+            report["status"] = "partially_initialized"
+            report["message"] = "Database reachable but schema or indexes are not fully initialized."
+
+    except Exception as exc:
+        report["status"] = "error"
+        report["message"] = (
+            "Database connectivity check failed. Check network access, SSL configuration, or credentials."
+        )
+
+    return report
 
 
 class DocumentStore(Protocol):
@@ -492,7 +574,7 @@ class SqlAlchemyDocumentStore:
                 doc_exists = (
                     session.query(Document.id)
                     .filter(Document.id == document_id)
-                    .scalar_one_or_none()
+                    .scalar()
                 )
                 if doc_exists is None:
                     return None

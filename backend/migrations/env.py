@@ -24,13 +24,16 @@ target_metadata = Base.metadata
 def _database_url() -> str:
     configured = config.get_main_option("sqlalchemy.url")
     if configured:
-        return configured
+        from app.core.config import normalize_database_url
+        normalized = normalize_database_url(configured, direct=True)
+        return normalized or configured
     settings = get_settings()
-    if not settings.database_url:
+    url = settings.get_database_url(direct=True)
+    if not url:
         raise RuntimeError(
             "DATABASE_URL is not set. Configure it before running migrations."
         )
-    return settings.database_url
+    return url
 
 
 def run_migrations_offline() -> None:
