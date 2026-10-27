@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import math
+from datetime import datetime
 
 from app.schemas.documents import IngestResponse
+from app.schemas.retrieval import (
+    RetrievalResult,
+    RetrievalResultMetadata,
+    RetrievalSearchResponse,
+    ScoreType,
+)
 from app.services.ingestion_errors import DocumentIngestionError
+from app.services.retrieval_service import RetrievalOutcome
 from app.services.retrieval_store import (
     ChunkRecord,
     KeywordMatch,
@@ -139,6 +147,55 @@ class FakeRetrievalStore:
         return self.keyword_results[:limit]
 
 
+class FakeRetrievalService:
+    """Synchronous retrieval double for RAG orchestration tests."""
+
+    def __init__(
+        self,
+        results: list[RetrievalResult] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.results = list(results or [])
+        self.error = error
+        self.calls: list[tuple[str, dict]] = []
+
+    def search(self, query: str, **kwargs) -> RetrievalOutcome:
+        self.calls.append((query, kwargs))
+        if self.error is not None:
+            raise self.error
+        mode = kwargs.get("mode", "semantic")
+        return RetrievalOutcome(
+            response=RetrievalSearchResponse(
+                query=query,
+                mode=mode,
+                results=self.results,
+                result_count=len(self.results),
+            ),
+            embedding_duration_ms=0.0,
+            database_duration_ms=0.0,
+            total_duration_ms=0.0,
+        )
+
+
+class FakeLLMService:
+    """Async LLM double that records prompts and returns canned content."""
+
+    def __init__(
+        self,
+        response: str = "{}",
+        error: Exception | None = None,
+    ) -> None:
+        self.response = response
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def generate(self, **kwargs) -> str:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
 def chunk_record(
     chunk_id: str,
     *,
@@ -149,6 +206,9 @@ def chunk_record(
     page_number: int | None = 1,
     page_numbers: list[int] | None = None,
     chunk_index: int = 0,
+    start_offset: int = 0,
+    end_offset: int = 10,
+    document_created_at: datetime | None = None,
 ) -> ChunkRecord:
     return ChunkRecord(
         chunk_id=chunk_id,
@@ -158,14 +218,57 @@ def chunk_record(
         source_filename=filename,
         source_type=source_type,
         page_number=page_number,
-        start_offset=0,
-        end_offset=10,
+        start_offset=start_offset,
+        end_offset=end_offset,
         chunk_metadata={
             "page_numbers": page_numbers if page_numbers is not None else (
                 [page_number] if page_number is not None else []
             ),
-            "character_count": 10,
+            "character_count": end_offset - start_offset,
         },
+        document_created_at=document_created_at,
+    )
+
+
+def retrieval_result(
+    chunk_id: str,
+    *,
+    score: float = 0.9,
+    score_type: ScoreType = "cosine_similarity",
+    semantic_score: float | None = None,
+    keyword_rank: int | None = None,
+    **record_kwargs,
+) -> RetrievalResult:
+    record = chunk_record(chunk_id, **record_kwargs)
+    pages = record.chunk_metadata.get("page_numbers") or []
+    resolved_semantic_score = (
+        score if semantic_score is None and score_type == "cosine_similarity"
+        else semantic_score
+    )
+    return RetrievalResult(
+        chunk_id=record.chunk_id,
+        document_id=record.document_id,
+        text=record.text,
+        score=score,
+        score_type=score_type,
+        distance=(
+            1.0 - resolved_semantic_score
+            if resolved_semantic_score is not None
+            else None
+        ),
+        semantic_score=resolved_semantic_score,
+        keyword_rank=keyword_rank,
+        metadata=RetrievalResultMetadata(
+            filename=record.source_filename,
+            source_type=record.source_type,
+            page_number=record.page_number,
+            page_numbers=list(pages),
+            chunk_index=record.chunk_index,
+            start_offset=record.start_offset,
+            end_offset=record.end_offset,
+            chunk_metadata=record.chunk_metadata,
+            document_created_at=record.document_created_at,
+        ),
     )
 
 

@@ -455,5 +455,6 @@ def _to_result(
             start_offset=record.start_offset,
             end_offset=record.end_offset,
             chunk_metadata=metadata,
+            document_created_at=record.document_created_at,
         ),
     )

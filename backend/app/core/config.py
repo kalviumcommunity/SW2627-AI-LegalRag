@@ -71,6 +71,36 @@ class Settings(BaseSettings):
     # RRF's rank-smoothing constant (the standard value is 60).
     retrieval_rrf_k: int = Field(default=60, gt=0)
 
+    # --- Phase 5: grounded RAG --------------------------------------------
+    # The context budget is a conservative estimate, not a tokenizer-exact
+    # count. Output tokens are reserved separately so evidence cannot crowd
+    # out the answer.
+    rag_max_question_chars: int = Field(default=2000, gt=0)
+    rag_context_max_tokens: int = Field(default=4000, gt=0)
+    rag_max_output_tokens: int = Field(default=1024, gt=0)
+    rag_max_evidence_chunks: int = Field(default=8, ge=1)
+    rag_max_evidence_chars: int = Field(default=8000, gt=0)
+    rag_max_evidence_chunk_chars: int = Field(default=1600, ge=50)
+    rag_max_excerpt_chars: int = Field(default=280, ge=20)
+    rag_max_answer_chars: int = Field(default=6000, ge=100)
+    # Conservative tokenizer abstraction: estimated_tokens =
+    # ceil(chars / chars_per_token * safety_factor).
+    rag_chars_per_token: float = Field(default=4.0, gt=0)
+    rag_token_safety_factor: float = Field(default=1.2, ge=1.0)
+    # Weak-evidence policy. This is a floor, not proof of sufficiency: a score
+    # above the floor still requires model grounding and citation validation.
+    # Set to None to disable the semantic floor explicitly.
+    rag_min_semantic_score: float | None = Field(default=0.35, ge=-1.0, le=1.0)
+    # Hybrid keyword-only results have no comparable cosine score. Keep only
+    # reasonably ranked keyword matches under this policy.
+    rag_max_keyword_only_rank: int = Field(default=20, ge=1)
+    # Overlap-aware context deduplication: omit a same-document chunk when this
+    # fraction of the shorter chunk's character range is already covered.
+    rag_overlap_dedup_ratio: float = Field(default=0.5, gt=0.0, le=1.0)
+    # The provider/model context window used for a conservative prompt + output
+    # fit check. This is deliberately separate from the prompt budget.
+    rag_model_context_tokens: int = Field(default=32768, gt=0)
+
     @property
     def allowed_document_extensions(self) -> frozenset[str]:
         """Normalized, dot-free extensions allowed for ingestion."""
@@ -109,6 +139,27 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_rag(self) -> "Settings":
+        if self.rag_max_excerpt_chars > self.rag_max_evidence_chars:
+            raise ValueError(
+                "RAG_MAX_EXCERPT_CHARS must not exceed RAG_MAX_EVIDENCE_CHARS"
+            )
+        if self.rag_max_evidence_chunk_chars > self.rag_max_evidence_chars:
+            raise ValueError(
+                "RAG_MAX_EVIDENCE_CHUNK_CHARS must not exceed "
+                "RAG_MAX_EVIDENCE_CHARS"
+            )
+        if (
+            self.rag_context_max_tokens + self.rag_max_output_tokens
+            > self.rag_model_context_tokens
+        ):
+            raise ValueError(
+                "RAG_CONTEXT_MAX_TOKENS plus RAG_MAX_OUTPUT_TOKENS must not "
+                "exceed RAG_MODEL_CONTEXT_TOKENS"
+            )
+        return self
+
     @property
     def is_llm_configured(self) -> bool:
         """True when the selected provider has the credentials it needs."""
@@ -133,6 +184,11 @@ class Settings(BaseSettings):
     def is_retrieval_configured(self) -> bool:
         """Retrieval needs both a vector database and an embedding provider."""
         return self.is_database_configured and self.is_embedding_configured
+
+    @property
+    def is_rag_configured(self) -> bool:
+        """Grounded generation needs retrieval plus a configured LLM."""
+        return self.is_retrieval_configured and self.is_llm_configured
 
 
 @lru_cache

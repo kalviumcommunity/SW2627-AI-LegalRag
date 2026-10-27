@@ -1,0 +1,115 @@
+{
+  "description": "Synthetic Bengaluru property-intelligence corpus and RAG evaluation dataset. Contains grounded facts, conflicting sources, missing information, and unanswerable queries for evaluation.",
+  "documents": [
+    {
+      "key": "sale_deed",
+      "filename": "sale_deed.txt",
+      "format": "txt",
+      "content": "SALE DEED\n\nThis sale deed records that the registered owner is Ananya Rao and that the title to the property is free from encumbrance. The property is located at 14 Rosewood Layout, Whitefield, Bengaluru. The seller transfers full ownership rights to the buyer on completion of the sale consideration of INR 8500000."
+    },
+    {
+      "key": "encumbrance_certificate",
+      "filename": "encumbrance_certificate.txt",
+      "format": "txt",
+      "content": "ENCUMBRANCE CERTIFICATE\n\nThe encumbrance certificate confirms that there are no outstanding loans or mortgages on the property for the last thirty years. The certificate lists the registered sale deed dated 12 January 2024. It is one of the legal documents available in the property file."
+    },
+    {
+      "key": "property_details",
+      "filename": "property_details.md",
+      "format": "md",
+      "content": "# Property Details\n\nThe apartment has a built-up area of 1450 square feet and three bedrooms. It is located on the fifth floor of Rosewood Residency and includes one covered parking space. The property was completed in 2021."
+    },
+    {
+      "key": "locality_report",
+      "filename": "locality_report.txt",
+      "format": "txt",
+      "content": "LOCALITY REPORT\n\nThe metro station is 1.2 kilometres from the property, and the nearest school is 600 metres away. The locality has a hospital, a supermarket, and a public park within two kilometres. Water supply and electricity connections are available."
+    },
+    {
+      "key": "cost_breakdown",
+      "filename": "cost_breakdown.txt",
+      "format": "txt",
+      "content": "COST BREAKDOWN\n\nThe registration charges are 6 percent of the sale value, and stamp duty is 5 percent. The total upfront cost includes the sale consideration of INR 8500000, registration charges, stamp duty, and legal verification fees of INR 15000."
+    },
+    {
+      "key": "title_chain",
+      "filename": "title_chain.pdf",
+      "format": "pdf",
+      "pages": [
+        "TITLE CHAIN - PART ONE. The property was originally allotted by the Bengaluru Development Authority in 1998. The allotment letter names the original allottee as M. Krishnan.",
+        "TITLE CHAIN - PART TWO. The title chain records a sale deed from M. Krishnan to Ananya Rao in 2024. The certificate on page two confirms that the title is clear and marketable."
+      ]
+    },
+    {
+      "key": "mortgage_notice",
+      "filename": "mortgage_notice.txt",
+      "format": "txt",
+      "content": "MORTGAGE NOTICE\n\nNotice is hereby given that an active mortgage loan of INR 2500000 was registered on the property at 14 Rosewood Layout, Whitefield, Bengaluru with Apex National Bank on 15 March 2023. Outstanding loan dues remain active as per bank ledger."
+    }
+  ],
+  "queries": [
+    {
+      "id": "ownership_and_price",
+      "query": "Who is the registered owner of the property and what is the sale consideration?",
+      "expected_status": "supported",
+      "expected_documents": ["sale_deed"],
+      "expected_markers": ["registered owner is Ananya Rao", "INR 8500000"]
+    },
+    {
+      "id": "property_area_bedrooms",
+      "query": "What is the built-up area and how many bedrooms does the apartment have?",
+      "expected_status": "supported",
+      "expected_documents": ["property_details"],
+      "expected_markers": ["1450 square feet", "three bedrooms"]
+    },
+    {
+      "id": "locality_distances",
+      "query": "How far is the metro station and the nearest school from the property?",
+      "expected_status": "supported",
+      "expected_documents": ["locality_report"],
+      "expected_markers": ["1.2 kilometres", "600 metres"]
+    },
+    {
+      "id": "title_chain_allotment",
+      "query": "Who was the original allottee of the property according to the title chain?",
+      "expected_status": "supported",
+      "expected_documents": ["title_chain"],
+      "expected_markers": ["allotted by the Bengaluru Development Authority in 1998", "M. Krishnan"]
+    },
+    {
+      "id": "conflicting_mortgage_status",
+      "query": "Are there any active mortgages, encumbrances, or outstanding loans on this property?",
+      "expected_status": "conflicting_evidence",
+      "expected_documents": ["encumbrance_certificate", "mortgage_notice"],
+      "expected_markers": ["no outstanding loans or mortgages", "active mortgage loan of INR 2500000"]
+    },
+    {
+      "id": "missing_maintenance_fee",
+      "query": "What is the monthly maintenance fee and property tax assessment for this apartment?",
+      "expected_status": "insufficient_evidence",
+      "expected_documents": ["property_details"],
+      "expected_markers": ["built-up area of 1450 square feet"]
+    },
+    {
+      "id": "missing_warranty_terms",
+      "query": "What are the structural warranty terms provided by the developer?",
+      "expected_status": "insufficient_evidence",
+      "expected_documents": ["property_details"],
+      "expected_markers": ["built-up area of 1450 square feet"]
+    },
+    {
+      "id": "no_evidence_mumbai_commercial",
+      "query": "What is the average price of a commercial office in Bandra Kurla Complex Mumbai?",
+      "expected_status": "no_relevant_sources",
+      "expected_documents": [],
+      "expected_markers": []
+    },
+    {
+      "id": "no_evidence_olympic_pool",
+      "query": "Does the residential complex feature an Olympic-sized swimming pool and squash courts?",
+      "expected_status": "no_relevant_sources",
+      "expected_documents": [],
+      "expected_markers": []
+    }
+  ]
+}

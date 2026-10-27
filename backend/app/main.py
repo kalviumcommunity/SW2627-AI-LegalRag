@@ -3,7 +3,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import documents, health, llm, retrieval
+from app.api.routes import documents, health, llm, rag, retrieval
 from app.core.config import get_settings
 from app.services.ingestion_errors import DocumentIngestionError
 from app.services.llm_service import (
@@ -13,6 +13,7 @@ from app.services.llm_service import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
+from app.services.rag_errors import RAGError
 from app.services.retrieval_errors import RetrievalError
 
 
@@ -23,11 +24,11 @@ def create_app() -> FastAPI:
         description=(
             "Property Intelligence Platform: health checks, a general (non-RAG) "
             "LLM chat endpoint, document ingestion/chunking, persistent "
-            "PostgreSQL/pgvector storage, and Phase 4 semantic/hybrid retrieval "
-            "with metadata filters. Answers are not generated from retrieved "
-            "chunks yet."
+            "PostgreSQL/pgvector storage, semantic/hybrid retrieval with "
+            "metadata filters, and Phase 5 grounded RAG answers with validated "
+            "citations and evidence-status reporting."
         ),
-        version="0.4.0",
+        version="0.5.0",
     )
 
     # Map service errors raised in dependencies (e.g. missing API key at
@@ -61,6 +62,11 @@ def create_app() -> FastAPI:
             status_code=exc.status_code, content={"detail": exc.message}
         )
 
+    async def _rag_handler(_: Request, exc: RAGError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": exc.message}
+        )
+
     app.add_exception_handler(LLMConfigurationError, _llm_config_handler)
     app.add_exception_handler(LLMRateLimitError, _llm_rate_limit_handler)
     app.add_exception_handler(LLMTimeoutError, _llm_timeout_handler)
@@ -68,11 +74,13 @@ def create_app() -> FastAPI:
     app.add_exception_handler(LLMAuthenticationError, _llm_provider_handler)
     app.add_exception_handler(DocumentIngestionError, _document_ingestion_handler)
     app.add_exception_handler(RetrievalError, _retrieval_handler)
+    app.add_exception_handler(RAGError, _rag_handler)
 
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(llm.router, prefix=settings.api_prefix)
     app.include_router(documents.router, prefix=settings.api_prefix)
     app.include_router(retrieval.router, prefix=settings.api_prefix)
+    app.include_router(rag.router, prefix=settings.api_prefix)
     return app
 
 
