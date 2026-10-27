@@ -1,0 +1,184 @@
+{
+  "mode": "hybrid",
+  "total_queries": 9,
+  "status_accuracy": 0.8888888888888888,
+  "retrieval_success_rate": 0.7777777777777778,
+  "overall_citation_validity_rate": 1.0,
+  "citation_integrity_rate": 1.0,
+  "claim_support_assessed": false,
+  "claim_support_verified_count": 0,
+  "per_status_breakdown": {
+    "supported": {
+      "total": 4,
+      "correct": 4
+    },
+    "conflicting_evidence": {
+      "total": 1,
+      "correct": 1
+    },
+    "insufficient_evidence": {
+      "total": 2,
+      "correct": 1
+    },
+    "no_relevant_sources": {
+      "total": 2,
+      "correct": 2
+    }
+  },
+  "query_evaluations": [
+    {
+      "query_id": "ownership_and_price",
+      "question": "Who is the registered owner of the property and what is the sale consideration?",
+      "expected_status": "supported",
+      "actual_status": "supported",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 2,
+      "valid_citations": 2,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "property_area_bedrooms",
+      "question": "What is the built-up area and how many bedrooms does the apartment have?",
+      "expected_status": "supported",
+      "actual_status": "supported",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 1,
+      "valid_citations": 1,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "locality_distances",
+      "question": "How far is the metro station and the nearest school from the property?",
+      "expected_status": "supported",
+      "actual_status": "supported",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 1,
+      "valid_citations": 1,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "title_chain_allotment",
+      "question": "Who was the original allottee of the property according to the title chain?",
+      "expected_status": "supported",
+      "actual_status": "supported",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 1,
+      "valid_citations": 1,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "conflicting_mortgage_status",
+      "question": "Are there any active mortgages, encumbrances, or outstanding loans on this property?",
+      "expected_status": "conflicting_evidence",
+      "actual_status": "conflicting_evidence",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 2,
+      "valid_citations": 2,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "missing_maintenance_fee",
+      "question": "What is the monthly maintenance fee and property tax assessment for this apartment?",
+      "expected_status": "insufficient_evidence",
+      "actual_status": "insufficient_evidence",
+      "status_match": true,
+      "retrieval_success": true,
+      "total_citations": 0,
+      "valid_citations": 0,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "missing_warranty_terms",
+      "question": "What are the structural warranty terms provided by the developer?",
+      "expected_status": "insufficient_evidence",
+      "actual_status": "no_relevant_sources",
+      "status_match": false,
+      "retrieval_success": true,
+      "total_citations": 0,
+      "valid_citations": 0,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Status mismatch: expected 'insufficient_evidence', got 'no_relevant_sources'",
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "no_evidence_mumbai_commercial",
+      "question": "What is the average price of a commercial office in Bandra Kurla Complex Mumbai?",
+      "expected_status": "no_relevant_sources",
+      "actual_status": "no_relevant_sources",
+      "status_match": true,
+      "retrieval_success": false,
+      "total_citations": 0,
+      "valid_citations": 0,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    },
+    {
+      "query_id": "no_evidence_olympic_pool",
+      "question": "Does the residential complex feature an Olympic-sized swimming pool and squash courts?",
+      "expected_status": "no_relevant_sources",
+      "actual_status": "no_relevant_sources",
+      "status_match": true,
+      "retrieval_success": false,
+      "total_citations": 0,
+      "valid_citations": 0,
+      "citation_validity_rate": 1.0,
+      "citation_integrity_verified": true,
+      "claim_support_assessed": false,
+      "claim_support_verified": false,
+      "notes": [
+        "Claim-level support was not assessed."
+      ]
+    }
+  ]
+}

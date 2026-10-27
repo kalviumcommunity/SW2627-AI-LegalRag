@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -143,6 +144,13 @@ class RetrievalResultMetadata(BaseModel):
     chunk_metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Full Phase 2 chunk metadata for traceability.",
+    )
+    document_created_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When this document was ingested into the system. This is not "
+            "necessarily the date the underlying legal document was signed."
+        ),
     )
 
 

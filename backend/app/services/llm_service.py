@@ -76,18 +76,51 @@ class LLMService:
             raise ValueError(
                 f"message exceeds the {self.settings.llm_max_request_chars} character limit"
             )
+        return await self.generate(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=cleaned,
+        )
+
+    async def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> str:
+        """Generate text with an explicit system prompt.
+
+        This is the shared provider call used by Phase 1 chat and Phase 5 RAG.
+        Callers are responsible for bounding the user prompt; RAG uses the
+        context builder's token budget rather than the Phase 1 character limit.
+        """
+        system_text = (system_prompt or "").strip()
+        user_text = (user_prompt or "").strip()
+        if not system_text:
+            raise ValueError("system_prompt must not be empty")
+        if not user_text:
+            raise ValueError("user_prompt must not be empty")
+        if max_tokens is not None and max_tokens < 1:
+            raise ValueError("max_tokens must be at least 1")
+
+        request: dict[str, object] = {
+            "model": self.settings.llm_model,
+            "messages": [
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_text},
+            ],
+            "max_completion_tokens": max_tokens or self.settings.llm_max_tokens,
+            "reasoning_effort": self.settings.llm_reasoning_effort,
+        }
+        if json_mode:
+            # Groq's OpenAI-compatible JSON mode. The RAG service still parses
+            # and validates the content instead of trusting it blindly.
+            request["response_format"] = {"type": "json_object"}
 
         try:
             client = self._get_client()
-            response = await client.chat.completions.create(
-                model=self.settings.llm_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": cleaned},
-                ],
-                max_completion_tokens=self.settings.llm_max_tokens,
-                reasoning_effort=self.settings.llm_reasoning_effort,
-            )
+            response = await client.chat.completions.create(**request)
         except LLMError:
             raise
         except ValueError:

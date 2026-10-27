@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 from sqlalchemy import func, literal_column, or_, select
@@ -23,7 +24,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.db.models import Chunk
+from app.db.models import Chunk, Document
 from app.services.document_store import get_shared_engine, verify_vector_schema
 from app.services.retrieval_errors import (
     RetrievalConfigurationError,
@@ -57,6 +58,7 @@ class ChunkRecord:
     start_offset: int | None
     end_offset: int | None
     chunk_metadata: dict[str, Any] = field(default_factory=dict)
+    document_created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -180,7 +182,14 @@ class SqlAlchemyRetrievalStore:
     ) -> list[SemanticMatch]:
         self.ensure_ready()
         distance_expression = Chunk.embedding.cosine_distance(query_vector)
-        statement = select(Chunk, distance_expression.label("distance"))
+        statement = (
+            select(
+                Chunk,
+                Document.created_at.label("document_created_at"),
+                distance_expression.label("distance"),
+            )
+            .join(Document, Document.id == Chunk.document_id)
+        )
         statement = self._apply_filters(statement, filters)
         if min_score is not None:
             statement = statement.where(
@@ -208,11 +217,11 @@ class SqlAlchemyRetrievalStore:
             ) from exc
 
         matches: list[SemanticMatch] = []
-        for chunk, distance in rows:
+        for chunk, document_created_at, distance in rows:
             distance_value = float(distance)
             matches.append(
                 SemanticMatch(
-                    record=_to_record(chunk),
+                    record=_to_record(chunk, document_created_at),
                     distance=distance_value,
                     similarity=_clamp_similarity(1.0 - distance_value),
                 )
@@ -236,7 +245,12 @@ class SqlAlchemyRetrievalStore:
         relevance = func.ts_rank_cd(document_vector, query_vector)
 
         statement = (
-            select(Chunk, relevance.label("relevance"))
+            select(
+                Chunk,
+                Document.created_at.label("document_created_at"),
+                relevance.label("relevance"),
+            )
+            .join(Document, Document.id == Chunk.document_id)
             .where(document_vector.op("@@")(query_vector))
         )
         statement = self._apply_filters(statement, filters)
@@ -264,11 +278,13 @@ class SqlAlchemyRetrievalStore:
 
         return [
             KeywordMatch(
-                record=_to_record(chunk),
+                record=_to_record(chunk, document_created_at),
                 rank=index,
                 relevance=float(score),
             )
-            for index, (chunk, score) in enumerate(rows, start=1)
+            for index, (chunk, document_created_at, score) in enumerate(
+                rows, start=1
+            )
         ]
 
     @staticmethod
@@ -299,7 +315,9 @@ class SqlAlchemyRetrievalStore:
         return statement
 
 
-def _to_record(chunk: Chunk) -> ChunkRecord:
+def _to_record(
+    chunk: Chunk, document_created_at: datetime | None = None
+) -> ChunkRecord:
     return ChunkRecord(
         chunk_id=chunk.id,
         document_id=chunk.document_id,
@@ -311,6 +329,7 @@ def _to_record(chunk: Chunk) -> ChunkRecord:
         start_offset=chunk.start_offset,
         end_offset=chunk.end_offset,
         chunk_metadata=dict(chunk.chunk_metadata or {}),
+        document_created_at=document_created_at,
     )
 
 

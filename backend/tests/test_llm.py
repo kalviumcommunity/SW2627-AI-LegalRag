@@ -165,6 +165,58 @@ async def test_service_success_returns_text():
     assert kwargs["reasoning_effort"] == settings.llm_reasoning_effort
     assert kwargs["messages"][0]["role"] == "system"
     assert kwargs["messages"][1] == {"role": "user", "content": "Hello"}
+    assert "response_format" not in kwargs
+
+
+async def test_generate_uses_custom_prompts_budget_and_plain_mode():
+    settings = _settings()
+    client = _ok_openai_client("mocked generated answer")
+    service = LLMService(settings, client=client)
+
+    result = await service.generate(
+        system_prompt="custom system prompt",
+        user_prompt="custom user prompt",
+        max_tokens=321,
+    )
+
+    assert result == "mocked generated answer"
+    _, kwargs = client.chat.completions.create.call_args
+    assert kwargs["messages"] == [
+        {"role": "system", "content": "custom system prompt"},
+        {"role": "user", "content": "custom user prompt"},
+    ]
+    assert kwargs["max_completion_tokens"] == 321
+    assert "response_format" not in kwargs
+
+
+async def test_generate_json_mode_sets_response_format():
+    settings = _settings()
+    client = _ok_openai_client('{"answer":"mocked"}')
+    service = LLMService(settings, client=client)
+
+    result = await service.generate(
+        system_prompt="system",
+        user_prompt="user",
+        json_mode=True,
+    )
+
+    assert result == '{"answer":"mocked"}'
+    _, kwargs = client.chat.completions.create.call_args
+    assert kwargs["response_format"] == {"type": "json_object"}
+
+
+async def test_generate_rejects_blank_prompts_and_invalid_budget():
+    service = LLMService(_settings(), client=_ok_openai_client())
+    with pytest.raises(ValueError):
+        await service.generate(system_prompt="  ", user_prompt="question")
+    with pytest.raises(ValueError):
+        await service.generate(system_prompt="system", user_prompt="  ")
+    with pytest.raises(ValueError):
+        await service.generate(
+            system_prompt="system",
+            user_prompt="question",
+            max_tokens=0,
+        )
 
 
 async def test_service_missing_credentials_raises_configuration_error():

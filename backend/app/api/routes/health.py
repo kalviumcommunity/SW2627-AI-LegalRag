@@ -18,7 +18,7 @@ def health(settings: Settings = Depends(get_settings_dep)) -> dict:
 
 @router.get(
     "/ready",
-    summary="Application, LLM, embedding, and database configuration readiness",
+    summary="Application, LLM, embedding, database, and RAG readiness",
 )
 def ready(settings: Settings = Depends(get_settings_dep)) -> dict:
     configured = settings.is_llm_configured
@@ -35,4 +35,8 @@ def ready(settings: Settings = Depends(get_settings_dep)) -> dict:
         "retrieval_configured": settings.is_retrieval_configured,
         "retrieval_default_top_k": settings.retrieval_default_top_k,
         "retrieval_max_top_k": settings.retrieval_max_top_k,
+        "rag_configured": settings.is_rag_configured,
+        "rag_max_evidence_chunks": settings.rag_max_evidence_chunks,
+        "rag_context_max_tokens": settings.rag_context_max_tokens,
+        "rag_max_output_tokens": settings.rag_max_output_tokens,
     }
