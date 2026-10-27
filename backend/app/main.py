@@ -25,10 +25,11 @@ def create_app() -> FastAPI:
             "Property Intelligence Platform: health checks, a general (non-RAG) "
             "LLM chat endpoint, document ingestion/chunking, persistent "
             "PostgreSQL/pgvector storage, semantic/hybrid retrieval with "
-            "metadata filters, and Phase 5 grounded RAG answers with validated "
-            "citations and evidence-status reporting."
+            "metadata filters, Phase 5 grounded RAG answers with validated "
+            "citations and evidence-status reporting, and Phase 6 document "
+            "management and lifecycle workflows."
         ),
-        version="0.5.0",
+        version="0.6.0",
     )
 
     # Map service errors raised in dependencies (e.g. missing API key at

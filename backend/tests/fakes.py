@@ -6,7 +6,12 @@ import hashlib
 import math
 from datetime import datetime
 
-from app.schemas.documents import IngestResponse
+from app.schemas.documents import (
+    DocumentChunkSummary,
+    DocumentDetailResponse,
+    DocumentSummary,
+    IngestResponse,
+)
 from app.schemas.retrieval import (
     RetrievalResult,
     RetrievalResultMetadata,
@@ -56,11 +61,14 @@ class FakeEmbeddingProvider:
 
 
 class FakeDocumentStore:
-    """In-memory store used by Phase 2 API regression tests."""
+    """In-memory store used by API regression and document management tests."""
 
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.records: dict[tuple[str, str], IngestResponse] = {}
+        self.by_id: dict[str, IngestResponse] = {}
+        self.content_hashes: dict[str, str] = {}
+        self.created_at: dict[str, datetime] = {}
         self.saved_embeddings: list[list[list[float]]] = []
         self.save_calls = 0
 
@@ -89,9 +97,120 @@ class FakeDocumentStore:
         existing = self.records.get(key)
         if existing is not None:
             return existing.model_copy(deep=True)
-        self.records[key] = response.model_copy(deep=True)
+        copied = response.model_copy(deep=True)
+        now = datetime.now()
+        self.records[key] = copied
+        self.by_id[response.document_id] = copied
+        self.content_hashes[response.document_id] = content_hash
+        self.created_at[response.document_id] = now
         self.saved_embeddings.append(embeddings)
         return response
+
+    def get_document(self, document_id: str) -> DocumentDetailResponse | None:
+        self.ensure_ready()
+        stored = self.by_id.get(document_id)
+        if stored is None:
+            return None
+        source_type = stored.chunks[0].source_type if stored.chunks else (
+            "pdf" if stored.filename.lower().endswith(".pdf") else (
+                "markdown" if stored.filename.lower().endswith(".md") else "txt"
+            )
+        )
+        return DocumentDetailResponse(
+            document_id=stored.document_id,
+            filename=stored.filename,
+            source_type=source_type,
+            status=stored.status,
+            content_sha256=self.content_hashes.get(document_id, "0" * 64),
+            extracted_characters=stored.extracted_characters,
+            chunk_count=stored.chunk_count,
+            page_count=stored.page_count,
+            warnings=list(stored.warnings),
+            detail=stored.detail,
+            created_at=self.created_at.get(document_id),
+            updated_at=self.created_at.get(document_id),
+        )
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        source_type: str | None = None,
+    ) -> tuple[list[DocumentSummary], int]:
+        self.ensure_ready()
+        docs = list(self.by_id.values())
+        filtered = []
+        for doc in docs:
+            doc_source_type = doc.chunks[0].source_type if doc.chunks else (
+                "pdf" if doc.filename.lower().endswith(".pdf") else (
+                    "markdown" if doc.filename.lower().endswith(".md") else "txt"
+                )
+            )
+            if status is not None and doc.status != status:
+                continue
+            if source_type is not None and doc_source_type != source_type:
+                continue
+            filtered.append(
+                DocumentSummary(
+                    document_id=doc.document_id,
+                    filename=doc.filename,
+                    source_type=doc_source_type,
+                    status=doc.status,
+                    extracted_characters=doc.extracted_characters,
+                    chunk_count=doc.chunk_count,
+                    page_count=doc.page_count,
+                    warnings=list(doc.warnings),
+                    detail=doc.detail,
+                    created_at=self.created_at.get(doc.document_id),
+                    updated_at=self.created_at.get(doc.document_id),
+                )
+            )
+        total = len(filtered)
+        return filtered[offset : offset + limit], total
+
+    def get_document_chunks(
+        self,
+        document_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        include_text: bool = False,
+    ) -> tuple[list[DocumentChunkSummary], int] | None:
+        self.ensure_ready()
+        stored = self.by_id.get(document_id)
+        if stored is None:
+            return None
+        total = len(stored.chunks)
+        paged_chunks = stored.chunks[offset : offset + limit]
+        items = [
+            DocumentChunkSummary(
+                chunk_id=chunk.chunk_id,
+                document_id=chunk.document_id,
+                chunk_index=chunk.chunk_index,
+                source_filename=chunk.source_filename,
+                source_type=chunk.source_type,
+                page_number=chunk.page_number,
+                start_offset=chunk.start_offset,
+                end_offset=chunk.end_offset,
+                metadata=dict(chunk.metadata),
+                text=chunk.text if include_text else None,
+            )
+            for chunk in paged_chunks
+        ]
+        return items, total
+
+    def delete_document(self, document_id: str) -> bool:
+        self.ensure_ready()
+        stored = self.by_id.pop(document_id, None)
+        if stored is None:
+            return False
+        content_hash = self.content_hashes.pop(document_id, None)
+        if content_hash:
+            self.records.pop((content_hash, stored.filename), None)
+        self.created_at.pop(document_id, None)
+        return True
 
 class FakeRetrievalStore:
     """In-memory retrieval store for service/API unit tests."""

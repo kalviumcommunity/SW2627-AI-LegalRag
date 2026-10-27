@@ -277,3 +277,57 @@ def test_unreachable_database_is_reported_without_credentials():
         assert "unavailable" in exc.message.lower()
     else:  # pragma: no cover
         raise AssertionError("expected DatabaseUnavailableError")
+
+
+def test_document_management_persistence_and_cascade(clean_database):
+    store = SqlAlchemyDocumentStore(_settings(_database_url(clean_database)))
+    response1 = _response(document_id="doc_p1", filename="deed_1.pdf")
+    response2 = _response(document_id="doc_p2", filename="deed_2.txt")
+    response2.chunks[0].source_type = "txt"
+    response2.chunks[1].source_type = "txt"
+
+    store.save(response1, "b" * 64, [_vector(1), _vector(2)])
+    store.save(response2, "c" * 64, [_vector(3), _vector(4)])
+
+    # Get document
+    doc = store.get_document("doc_p1")
+    assert doc is not None
+    assert doc.document_id == "doc_p1"
+    assert doc.filename == "deed_1.pdf"
+    assert doc.chunk_count == 2
+    assert doc.content_sha256 == "b" * 64
+
+    # List documents
+    items, total = store.list_documents(limit=1, offset=0)
+    assert total == 2
+    assert len(items) == 1
+
+    # List documents with filter
+    txt_items, txt_total = store.list_documents(source_type="txt")
+    assert txt_total == 1
+    assert txt_items[0].document_id == "doc_p2"
+
+    # Get chunks
+    chunks, chunk_total = store.get_document_chunks("doc_p1", limit=10, include_text=True)
+    assert chunk_total == 2
+    assert len(chunks) == 2
+    assert chunks[0].text is not None
+
+    # Delete document doc_p1
+    deleted = store.delete_document("doc_p1")
+    assert deleted is True
+
+    # Check that chunks were cascade-deleted
+    with clean_database.connect() as connection:
+        doc_count = connection.execute(
+            text("SELECT COUNT(*) FROM documents WHERE id = 'doc_p1'")
+        ).scalar()
+        assert doc_count == 0
+        chunk_count = connection.execute(
+            text("SELECT COUNT(*) FROM chunks WHERE document_id = 'doc_p1'")
+        ).scalar()
+        assert chunk_count == 0
+
+    # Ensure doc_p2 is still intact
+    assert store.get_document("doc_p2") is not None
+
