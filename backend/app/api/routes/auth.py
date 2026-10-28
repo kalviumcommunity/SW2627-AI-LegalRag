@@ -55,9 +55,10 @@ async def register(
 ) -> TokenResponse:
     _check_auth_rate_limit(request, settings)
     try:
-        _, token_response = await run_in_threadpool(
+        user, token_response = await run_in_threadpool(
             service.register, payload.email, payload.password
         )
+        token_response.user = UserResponse.model_validate(user)
         return token_response
     except AuthRegistrationError as exc:
         raise HTTPException(
@@ -90,9 +91,10 @@ async def login(
 ) -> TokenResponse:
     _check_auth_rate_limit(request, settings)
     try:
-        _, token_response = await run_in_threadpool(
+        user, token_response = await run_in_threadpool(
             service.authenticate, payload.email, payload.password
         )
+        token_response.user = UserResponse.model_validate(user)
         return token_response
     except AuthCredentialsError as exc:
         raise HTTPException(

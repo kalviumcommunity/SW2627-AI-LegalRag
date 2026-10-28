@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { StatusBadge, SourceTypeBadge, EvidenceStatusBadge } from '../components/common/Badge';
 import { CitationCard } from '../components/rag/CitationCard';
+import { AnswerView } from '../components/rag/AnswerView';
 import { HeroBanner } from '../components/dashboard/HeroBanner';
 import { StatsRow } from '../components/dashboard/StatsRow';
 import { EvidenceCard } from '../components/dashboard/EvidenceCard';
@@ -101,5 +102,91 @@ describe('Component Unit Tests', () => {
     expect(
       screen.getByText(/Every answer includes citations to your original documents/)
     ).toBeInTheDocument();
+  });
+
+  it('renders AnswerView with claim-level verification, conflicts, and legal disclaimer', () => {
+    const mockResponse: import('../api/types').RAGResponse = {
+      question: 'What is the sale price and property area?',
+      answer: 'The sale price is ₹1.5 Crores [S1]. The area is 2400 sq ft [S2].',
+      evidence_status: 'conflicting_evidence',
+      citations: [
+        {
+          citation_id: 'S1',
+          chunk_id: 'chk_1',
+          document_id: 'doc_1',
+          filename: 'Deed_2024.pdf',
+          source_type: 'pdf',
+          page_number: 1,
+          page_numbers: [1],
+          chunk_index: 0,
+          excerpt: 'Sale price is ₹1.5 Crores.',
+        },
+        {
+          citation_id: 'S2',
+          chunk_id: 'chk_2',
+          document_id: 'doc_2',
+          filename: 'Agreement_2022.pdf',
+          source_type: 'pdf',
+          page_number: 2,
+          page_numbers: [2],
+          chunk_index: 1,
+          excerpt: 'Area is 2400 sq ft.',
+        },
+      ],
+      limitations: [],
+      retrieved_count: 2,
+      used_chunk_count: 2,
+      mode: 'semantic',
+      claim_support_verified: true,
+      claim_verifications: [
+        {
+          claim_text: 'The sale price is ₹1.5 Crores',
+          status: 'supported',
+          cited_source_ids: ['S1'],
+          entailment_explanation: 'Cited source [S1] explicitly corroborates the sale price.',
+          source_quotes: ['Sale price is ₹1.5 Crores.'],
+        },
+        {
+          claim_text: 'The area is 2400 sq ft',
+          status: 'contradicted',
+          cited_source_ids: ['S2'],
+          entailment_explanation: 'Contradicted by another document indicating different area.',
+          source_quotes: ['Area is 2400 sq ft.'],
+        },
+      ],
+      conflicts: [
+        {
+          source_a: {
+            citation_id: 'S1',
+            document_id: 'doc_1',
+            filename: 'Deed_2024.pdf',
+            page_number: 1,
+            quote: 'Property area is 3000 sq ft.',
+          },
+          source_b: {
+            citation_id: 'S2',
+            document_id: 'doc_2',
+            filename: 'Agreement_2022.pdf',
+            page_number: 2,
+            quote: 'Property area is 2400 sq ft.',
+          },
+          contradiction_reason: 'Documents specify conflicting property area measurements.',
+          resolution_note: 'Antigravity RAG does not decide which document is legally authoritative.',
+        },
+      ],
+      insufficient_reasons: [],
+      legal_disclaimer:
+        'Automated verification is provided for informational due diligence and triage only. It does NOT constitute legal advice or a guarantee of clear property title.',
+    };
+
+    render(<AnswerView response={mockResponse} />);
+
+    expect(screen.getByText('What is the sale price and property area?')).toBeInTheDocument();
+    expect(screen.getByText('Verified Support')).toBeInTheDocument();
+    expect(screen.getByText('Contradicted Claim')).toBeInTheDocument();
+    expect(screen.getByText(/Cross-Document Conflicts Detected/)).toBeInTheDocument();
+    expect(screen.getByText(/Property area is 3000 sq ft/)).toBeInTheDocument();
+    expect(screen.getByText(/Property area is 2400 sq ft/)).toBeInTheDocument();
+    expect(screen.getByText(/Legal Due Diligence Notice:/)).toBeInTheDocument();
   });
 });

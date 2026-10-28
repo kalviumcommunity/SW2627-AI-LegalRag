@@ -67,6 +67,7 @@ class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT access token.")
     token_type: str = Field(default="bearer", description="Token type.")
     expires_in: int = Field(..., description="Expiration lifetime in seconds.")
+    user: UserResponse | None = Field(default=None, description="Authenticated user profile.")
 
 
 class UserResponse(BaseModel):

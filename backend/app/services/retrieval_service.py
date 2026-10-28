@@ -87,7 +87,7 @@ class RetrievalService:
             self.settings
         )
         self.store = store or create_retrieval_store(self.settings)
-        self.document_store = document_store or create_document_store(self.settings)
+        self.document_store = document_store
 
     def search(
         self,
@@ -112,7 +112,7 @@ class RetrievalService:
         threshold = self._validate_min_score(min_score)
 
         # Validate client-supplied document filter against authenticated user
-        if document_id is not None and owner_id is not None:
+        if document_id is not None and owner_id is not None and self.document_store is not None:
             doc = self.document_store.get_document(document_id, owner_id=owner_id)
             if doc is None:
                 raise RetrievalQueryError(

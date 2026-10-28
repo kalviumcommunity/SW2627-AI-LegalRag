@@ -27,9 +27,16 @@ from app.main import create_app
 from app.services.auth_service import AuthService
 
 
+from sqlalchemy.pool import StaticPool
+
+
 @pytest.fixture
 def auth_sqlite_engine():
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine, tables=[User.__table__])
     yield engine
     engine.dispose()

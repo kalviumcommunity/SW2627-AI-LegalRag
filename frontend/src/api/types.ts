@@ -132,6 +132,35 @@ export interface RAGCitation {
   document_created_at?: string | null;
 }
 
+export type ClaimVerificationStatus =
+  | 'supported'
+  | 'unsupported'
+  | 'contradicted'
+  | 'unestablished';
+
+export interface ClaimVerification {
+  claim_text: string;
+  status: ClaimVerificationStatus;
+  cited_source_ids: string[];
+  entailment_explanation: string;
+  source_quotes: string[];
+}
+
+export interface ConflictSource {
+  citation_id: string;
+  document_id: string;
+  filename: string;
+  page_number?: number | null;
+  quote: string;
+}
+
+export interface CrossDocumentConflict {
+  source_a: ConflictSource;
+  source_b: ConflictSource;
+  contradiction_reason: string;
+  resolution_note: string;
+}
+
 export interface RAGResponse {
   question: string;
   answer: string;
@@ -141,8 +170,12 @@ export interface RAGResponse {
   retrieved_count: number;
   used_chunk_count: number;
   mode: RetrievalMode;
-  citation_guarantee: 'retrieved_source_integrity';
-  claim_support_verified: false;
+  citation_guarantee?: string;
+  claim_support_verified: boolean;
+  claim_verifications?: ClaimVerification[];
+  conflicts?: CrossDocumentConflict[];
+  insufficient_reasons?: string[];
+  legal_disclaimer?: string;
 }
 
 export interface ApiErrorDetail {

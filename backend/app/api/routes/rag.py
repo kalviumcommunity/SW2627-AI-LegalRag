@@ -83,4 +83,5 @@ async def ask_question(
         filters=payload.filters,
         min_score=payload.min_score,
         owner_id=current_user.id,
+        verify_claims=payload.verify_claims,
     )
