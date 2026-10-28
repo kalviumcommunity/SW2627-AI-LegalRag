@@ -138,6 +138,17 @@ class Settings(BaseSettings):
     # fit check. This is deliberately separate from the prompt budget.
     rag_model_context_tokens: int = Field(default=32768, gt=0)
 
+    # --- Phase 8: authentication & authorization --------------------------
+    jwt_secret_key: str = Field(
+        default="property-intel-dev-jwt-secret-key-change-in-production-min32chars"
+    )
+    jwt_algorithm: str = Field(default="HS256")
+    access_token_expire_minutes: int = Field(default=60, gt=0)
+    rate_limit_auth_per_minute: int = Field(default=15, gt=0)
+    rate_limit_upload_per_minute: int = Field(default=20, gt=0)
+    rate_limit_rag_per_minute: int = Field(default=30, gt=0)
+    cors_origins: str = Field(default="*")
+
     @property
     def allowed_document_extensions(self) -> frozenset[str]:
         """Normalized, dot-free extensions allowed for ingestion."""

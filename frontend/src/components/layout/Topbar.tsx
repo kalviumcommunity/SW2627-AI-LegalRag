@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Search, Bell, ChevronDown } from 'lucide-react';
+import { Search, Bell, ChevronDown, LogIn, LogOut, User as UserIcon } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 interface TopbarProps {
   onSearch?: (term: string) => void;
@@ -8,10 +9,16 @@ interface TopbarProps {
 
 export const Topbar: React.FC<TopbarProps> = ({ onSearch, searchTerm = '' }) => {
   const [query, setQuery] = useState(searchTerm);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const { user, isAuthenticated, logout, openAuthModal } = useAuth();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (onSearch) onSearch(query);
+  };
+
+  const getInitials = (email: string) => {
+    return email.charAt(0).toUpperCase();
   };
 
   return (
@@ -67,7 +74,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onSearch, searchTerm = '' }) => 
       </form>
 
       {/* Right controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', position: 'relative' }}>
         {/* Notification bell */}
         <button
           style={{
@@ -82,6 +89,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onSearch, searchTerm = '' }) => 
             color: '#4B5563',
             position: 'relative',
             boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+            cursor: 'pointer',
           }}
           title="Notifications"
           aria-label="Notifications"
@@ -100,47 +108,129 @@ export const Topbar: React.FC<TopbarProps> = ({ onSearch, searchTerm = '' }) => 
           />
         </button>
 
-        {/* User profile dropdown */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.65rem',
-            cursor: 'pointer',
-            padding: '0.35rem 0.65rem 0.35rem 0.35rem',
-            borderRadius: 'var(--radius-full)',
-            backgroundColor: '#FFFFFF',
-            border: '1px solid #E5E7EB',
-            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
-          }}
-        >
-          <div
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
-              backgroundColor: '#EDE9FE',
-              color: '#6D28D9',
-              fontWeight: 700,
-              fontSize: '0.9rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            P
+        {/* User profile or Sign In button */}
+        {isAuthenticated && user ? (
+          <div style={{ position: 'relative' }}>
+            <div
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.65rem',
+                cursor: 'pointer',
+                padding: '0.35rem 0.75rem 0.35rem 0.35rem',
+                borderRadius: 'var(--radius-full)',
+                backgroundColor: '#FFFFFF',
+                border: '1px solid var(--border-light)',
+                boxShadow: 'var(--shadow-sm)',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: 'var(--bg-lavender-active)',
+                  color: 'var(--primary-purple-dark)',
+                  fontWeight: 800,
+                  fontSize: '0.9rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid var(--border-lavender)',
+                }}
+              >
+                {getInitials(user.email)}
+              </div>
+              <span
+                style={{
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  color: 'var(--text-heading)',
+                  maxWidth: '150px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {user.email.split('@')[0]}
+              </span>
+              <ChevronDown size={14} color="var(--text-subtle)" />
+            </div>
+
+            {isDropdownOpen && (
+              <div
+                className="editorial-card animate-fade-in"
+                style={{
+                  position: 'absolute',
+                  top: '120%',
+                  right: 0,
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-light)',
+                  boxShadow: 'var(--shadow-pop)',
+                  padding: '0.65rem',
+                  minWidth: '240px',
+                  zIndex: 200,
+                }}
+              >
+                <div style={{ padding: '0.6rem 0.75rem', borderBottom: '1px solid var(--border-light)', marginBottom: '0.4rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+                    <span className="badge badge-purple" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}>
+                      Property Analyst
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-heading)', wordBreak: 'break-all' }}>
+                    {user.email}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    logout();
+                    setIsDropdownOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '0.55rem 0.75rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.55rem',
+                    backgroundColor: 'transparent',
+                    color: 'var(--accent-red-text)',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'background-color 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--accent-red-bg)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <LogOut size={15} />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            )}
           </div>
-          <span
+        ) : (
+          <button
+            onClick={() => openAuthModal('login')}
+            className="btn-purple"
             style={{
+              padding: '0.6rem 1.25rem',
               fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#1F2937',
             }}
           >
-            Property Analyst
-          </span>
-          <ChevronDown size={15} color="#9CA3AF" />
-        </div>
+            <LogIn size={15} />
+            <span>Sign In</span>
+          </button>
+        )}
       </div>
     </header>
   );

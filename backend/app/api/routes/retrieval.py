@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.concurrency import run_in_threadpool
 
+from app.api.deps import get_current_user
 from app.core.config import Settings, get_settings
+from app.db.models import User
 from app.schemas.retrieval import RetrievalSearchRequest, RetrievalSearchResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.retrieval_service import RetrievalService
@@ -50,6 +52,7 @@ def get_retrieval_service(
     response_model=RetrievalSearchResponse,
     summary="Retrieve stored document chunks relevant to a natural-language query",
     responses={
+        401: {"description": "Authentication required."},
         422: {
             "description": (
                 "Invalid query, top_k above the configured maximum, or "
@@ -70,6 +73,7 @@ def get_retrieval_service(
 )
 async def search_documents(
     payload: RetrievalSearchRequest,
+    current_user: User = Depends(get_current_user),
     service: RetrievalService = Depends(get_retrieval_service),
 ) -> RetrievalSearchResponse:
     # Query embedding and synchronous SQL must not block the event loop.
@@ -81,5 +85,6 @@ async def search_documents(
         document_id=payload.document_id,
         filters=payload.filters,
         min_score=payload.min_score,
+        owner_id=current_user.id,
     )
     return outcome.response

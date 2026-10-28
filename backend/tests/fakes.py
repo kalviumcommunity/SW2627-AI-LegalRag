@@ -67,6 +67,7 @@ class FakeDocumentStore:
         self.error = error
         self.records: dict[tuple[str, str], IngestResponse] = {}
         self.by_id: dict[str, IngestResponse] = {}
+        self.owners: dict[str, str] = {}
         self.content_hashes: dict[str, str] = {}
         self.created_at: dict[str, datetime] = {}
         self.saved_embeddings: list[list[list[float]]] = []
@@ -77,17 +78,22 @@ class FakeDocumentStore:
             raise self.error
 
     def find_by_content_hash(
-        self, content_hash: str, filename: str
+        self, content_hash: str, filename: str, owner_id: str | None = None
     ) -> IngestResponse | None:
         self.ensure_ready()
         stored = self.records.get((content_hash, filename))
-        return stored.model_copy(deep=True) if stored is not None else None
+        if stored is None:
+            return None
+        if owner_id is not None and self.owners.get(stored.document_id) != owner_id:
+            return None
+        return stored.model_copy(deep=True)
 
     def save(
         self,
         response: IngestResponse,
         content_hash: str,
         embeddings: list[list[float]],
+        owner_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         self.save_calls += 1
@@ -95,21 +101,27 @@ class FakeDocumentStore:
             raise DocumentIngestionError("embedding count mismatch")
         key = (content_hash, response.filename)
         existing = self.records.get(key)
-        if existing is not None:
+        if existing is not None and (owner_id is None or self.owners.get(existing.document_id) == owner_id):
             return existing.model_copy(deep=True)
         copied = response.model_copy(deep=True)
         now = datetime.now()
+        resolved_owner = owner_id or "usr_test_default"
         self.records[key] = copied
         self.by_id[response.document_id] = copied
+        self.owners[response.document_id] = resolved_owner
         self.content_hashes[response.document_id] = content_hash
         self.created_at[response.document_id] = now
         self.saved_embeddings.append(embeddings)
         return response
 
-    def get_document(self, document_id: str) -> DocumentDetailResponse | None:
+    def get_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> DocumentDetailResponse | None:
         self.ensure_ready()
         stored = self.by_id.get(document_id)
         if stored is None:
+            return None
+        if owner_id is not None and self.owners.get(document_id) != owner_id:
             return None
         source_type = stored.chunks[0].source_type if stored.chunks else (
             "pdf" if stored.filename.lower().endswith(".pdf") else (
@@ -127,6 +139,7 @@ class FakeDocumentStore:
             page_count=stored.page_count,
             warnings=list(stored.warnings),
             detail=stored.detail,
+            owner_id=self.owners.get(document_id, "usr_test_default"),
             created_at=self.created_at.get(document_id),
             updated_at=self.created_at.get(document_id),
         )
@@ -138,9 +151,12 @@ class FakeDocumentStore:
         offset: int = 0,
         status: str | None = None,
         source_type: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         docs = list(self.by_id.values())
+        if owner_id is not None:
+            docs = [d for d in docs if self.owners.get(d.document_id) == owner_id]
         filtered = []
         for doc in docs:
             doc_source_type = doc.chunks[0].source_type if doc.chunks else (
@@ -163,6 +179,7 @@ class FakeDocumentStore:
                     page_count=doc.page_count,
                     warnings=list(doc.warnings),
                     detail=doc.detail,
+                    owner_id=self.owners.get(doc.document_id, "usr_test_default"),
                     created_at=self.created_at.get(doc.document_id),
                     updated_at=self.created_at.get(doc.document_id),
                 )
@@ -177,10 +194,13 @@ class FakeDocumentStore:
         limit: int = 20,
         offset: int = 0,
         include_text: bool = False,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentChunkSummary], int] | None:
         self.ensure_ready()
         stored = self.by_id.get(document_id)
         if stored is None:
+            return None
+        if owner_id is not None and self.owners.get(document_id) != owner_id:
             return None
         total = len(stored.chunks)
         paged_chunks = stored.chunks[offset : offset + limit]
@@ -201,11 +221,16 @@ class FakeDocumentStore:
         ]
         return items, total
 
-    def delete_document(self, document_id: str) -> bool:
+    def delete_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> bool:
         self.ensure_ready()
+        if owner_id is not None and self.owners.get(document_id) != owner_id:
+            return False
         stored = self.by_id.pop(document_id, None)
         if stored is None:
             return False
+        self.owners.pop(document_id, None)
         content_hash = self.content_hashes.pop(document_id, None)
         if content_hash:
             self.records.pop((content_hash, stored.filename), None)

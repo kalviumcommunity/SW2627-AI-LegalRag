@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from app.api.deps import get_current_user
 from app.api.routes.retrieval import get_retrieval_service
 from app.core.config import Settings, get_settings
+from app.core.rate_limit import GLOBAL_RATE_LIMITER
+from app.db.models import User
 from app.schemas.rag import RAGQuestionRequest, RAGResponse
 from app.services.llm_service import LLMService
 from app.services.rag_service import RAGService
@@ -37,6 +40,7 @@ def get_rag_service(
     response_model=RAGResponse,
     summary="Grounded answer from retrieved document excerpts with citations",
     responses={
+        401: {"description": "Authentication required."},
         422: {
             "description": (
                 "Invalid question, top_k, filter, or retrieval mode; "
@@ -62,8 +66,15 @@ def get_rag_service(
 )
 async def ask_question(
     payload: RAGQuestionRequest,
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     service: RAGService = Depends(get_rag_service),
 ) -> RAGResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"rag:{current_user.id}",
+        max_requests=settings.rate_limit_rag_per_minute,
+        window_seconds=60,
+    )
     return await service.ask(
         payload.question,
         top_k=payload.top_k,
@@ -71,4 +82,5 @@ async def ask_question(
         document_id=payload.document_id,
         filters=payload.filters,
         min_score=payload.min_score,
+        owner_id=current_user.id,
     )

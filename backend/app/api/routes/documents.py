@@ -17,7 +17,10 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from app.api.deps import get_current_user
 from app.core.config import Settings, get_settings
+from app.core.rate_limit import GLOBAL_RATE_LIMITER
+from app.db.models import User
 from app.schemas.documents import (
     DocumentChunkListResponse,
     DocumentDeleteResponse,
@@ -94,9 +97,15 @@ def _validate_document_id(document_id: str) -> str:
 )
 async def ingest_document(
     file: UploadFile = File(..., description="PDF, TXT, or Markdown document."),
+    current_user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings_dep),
     service: DocumentIngestionService = Depends(get_ingestion_service),
 ) -> IngestResponse | JSONResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"upload:{current_user.id}",
+        max_requests=settings.rate_limit_upload_per_minute,
+        window_seconds=60,
+    )
     try:
         # Read one byte past the limit so oversized uploads can be rejected
         # without buffering the whole payload.
@@ -108,7 +117,7 @@ async def ingest_document(
         # Extraction, embedding, and synchronous database I/O must not block
         # the event loop.
         result = await run_in_threadpool(
-            service.ingest, data, file.filename, file.content_type
+            service.ingest, data, file.filename, file.content_type, owner_id=current_user.id
         )
     except DocumentIngestionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
@@ -126,6 +135,7 @@ async def ingest_document(
     summary="List ingested documents with pagination",
     responses={
         200: {"description": "Paginated document summaries."},
+        401: {"description": "Authentication required."},
         422: {"description": "Invalid pagination parameters."},
         500: {"description": "Database read failure."},
         503: {"description": "Database unavailable or unconfigured."},
@@ -142,6 +152,7 @@ async def list_documents(
     source_type: SourceType | None = Query(
         default=None, description="Optional source format filter (pdf, txt, markdown)."
     ),
+    current_user: User = Depends(get_current_user),
     store: DocumentStore = Depends(get_document_store),
 ) -> DocumentListResponse:
     offset = (page - 1) * page_size
@@ -151,6 +162,7 @@ async def list_documents(
         offset=offset,
         status=status_filter,
         source_type=source_type,
+        owner_id=current_user.id,
     )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
     return DocumentListResponse(
@@ -168,6 +180,7 @@ async def list_documents(
     summary="Retrieve document metadata and processing status",
     responses={
         200: {"description": "Document metadata and processing status."},
+        401: {"description": "Authentication required."},
         404: {"description": "Document not found."},
         422: {"description": "Invalid document identifier."},
         500: {"description": "Database read failure."},
@@ -181,10 +194,11 @@ async def get_document(
         max_length=64,
         description="Stable document identifier.",
     ),
+    current_user: User = Depends(get_current_user),
     store: DocumentStore = Depends(get_document_store),
 ) -> DocumentDetailResponse:
     cleaned_id = _validate_document_id(document_id)
-    document = await run_in_threadpool(store.get_document, cleaned_id)
+    document = await run_in_threadpool(store.get_document, cleaned_id, owner_id=current_user.id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -199,6 +213,7 @@ async def get_document(
     summary="Retrieve chunk metadata for inspection with pagination",
     responses={
         200: {"description": "Paginated chunk metadata."},
+        401: {"description": "Authentication required."},
         404: {"description": "Document not found."},
         422: {"description": "Invalid document identifier or pagination parameters."},
         500: {"description": "Database read failure."},
@@ -220,6 +235,7 @@ async def get_document_chunks(
         default=False,
         description="Whether to include chunk text. Default false to protect document contents.",
     ),
+    current_user: User = Depends(get_current_user),
     store: DocumentStore = Depends(get_document_store),
 ) -> DocumentChunkListResponse:
     cleaned_id = _validate_document_id(document_id)
@@ -230,6 +246,7 @@ async def get_document_chunks(
         limit=page_size,
         offset=offset,
         include_text=include_text,
+        owner_id=current_user.id,
     )
     if result is None:
         raise HTTPException(
@@ -254,6 +271,7 @@ async def get_document_chunks(
     summary="Delete a document and its associated chunks and embeddings",
     responses={
         200: {"description": "Document and associated chunks deleted successfully."},
+        401: {"description": "Authentication required."},
         404: {"description": "Document not found."},
         422: {"description": "Invalid document identifier."},
         500: {"description": "Database write failure."},
@@ -267,10 +285,11 @@ async def delete_document(
         max_length=64,
         description="Stable document identifier.",
     ),
+    current_user: User = Depends(get_current_user),
     store: DocumentStore = Depends(get_document_store),
 ) -> DocumentDeleteResponse:
     cleaned_id = _validate_document_id(document_id)
-    deleted = await run_in_threadpool(store.delete_document, cleaned_id)
+    deleted = await run_in_threadpool(store.delete_document, cleaned_id, owner_id=current_user.id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

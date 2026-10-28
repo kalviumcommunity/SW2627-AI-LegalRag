@@ -98,6 +98,7 @@ class RAGService:
         document_id: str | None = None,
         filters: RetrievalFilters | None = None,
         min_score: float | None = None,
+        owner_id: str | None = None,
     ) -> RAGResponse:
         started = time.perf_counter()
         normalized_question = self._normalize_question(question)
@@ -113,6 +114,7 @@ class RAGService:
                 document_id=document_id,
                 filters=filters,
                 min_score=min_score,
+                owner_id=owner_id,
             )
         except (RetrievalError, EmbeddingError):
             raise

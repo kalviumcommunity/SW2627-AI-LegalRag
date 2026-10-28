@@ -8,6 +8,7 @@ import { EvidenceCard } from '../components/dashboard/EvidenceCard';
 import { Modal } from '../components/common/Modal';
 import { documentsApi } from '../api/documents';
 import { useToast } from '../components/common/Toast';
+import { useAuth } from '../context/AuthContext';
 import type { DocumentSummary, IngestResponse } from '../api/types';
 
 interface HomePageProps {
@@ -16,6 +17,7 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' }) => {
+  const { isAuthenticated } = useAuth();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [stats, setStats] = useState<DocumentStats>({
@@ -50,7 +52,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
       });
     } catch (err: unknown) {
       console.warn('Backend fetch error:', err);
-      // We don't invent data; show current zero/empty state
+      // Reset to empty state if unauthenticated or error
+      setDocuments([]);
+      setStats({ total: 0, processed: 0, ocrRequired: 0, failed: 0 });
     } finally {
       setLoading(false);
     }
@@ -58,7 +62,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
 
   useEffect(() => {
     fetchDashboardData();
-  }, [fetchDashboardData]);
+  }, [fetchDashboardData, isAuthenticated]);
 
   const handleUploadSuccess = (_newDoc: IngestResponse) => {
     fetchDashboardData();
