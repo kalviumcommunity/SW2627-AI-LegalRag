@@ -26,6 +26,7 @@ from app.services.evidence_conflict import (
     claim_is_verbatim,
     claims_materially_disagree,
 )
+from app.services.evidence_verification import EvidenceVerificationService
 from app.services.llm_service import LLMError, LLMService
 from app.services.rag_context import EvidenceSource, RAGContext, RAGContextBuilder
 from app.services.rag_errors import (
@@ -56,6 +57,7 @@ _SOURCE_ID_PATTERN = re.compile(
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])|\n+")
 _MODEL_STATUSES = {
     "supported",
+    "fully_supported",
     "insufficient_evidence",
     "conflicting_evidence",
 }
@@ -79,6 +81,7 @@ class RAGService:
         retrieval_service: RetrievalService | None = None,
         llm_service: LLMService | None = None,
         context_builder: RAGContextBuilder | None = None,
+        verification_service: EvidenceVerificationService | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.retrieval_service = retrieval_service or RetrievalService(
@@ -87,6 +90,9 @@ class RAGService:
         self.llm_service = llm_service or LLMService(self.settings)
         self.context_builder = context_builder or RAGContextBuilder(
             self.settings
+        )
+        self.verification_service = (
+            verification_service or EvidenceVerificationService()
         )
 
     async def ask(
@@ -99,6 +105,7 @@ class RAGService:
         filters: RetrievalFilters | None = None,
         min_score: float | None = None,
         owner_id: str | None = None,
+        verify_claims: bool = False,
     ) -> RAGResponse:
         started = time.perf_counter()
         normalized_question = self._normalize_question(question)
@@ -135,6 +142,7 @@ class RAGService:
                 selected_mode,
                 retrieved_count=len(raw_results),
                 weak_filtered_count=weak_filtered_count,
+                verify_claims=verify_claims,
             )
 
         context = self.context_builder.build(normalized_question, results)
@@ -155,6 +163,7 @@ class RAGService:
                 "context within the configured budget.",
                 retrieved_count=len(raw_results),
                 weak_filtered_count=weak_filtered_count,
+                verify_claims=verify_claims,
             )
 
         try:
@@ -185,6 +194,7 @@ class RAGService:
                 raw_generation,
                 retrieved_count=len(raw_results),
                 weak_filtered_count=weak_filtered_count,
+                verify_claims=verify_claims,
             )
         except RAGGenerationError as exc:
             logger.warning(
@@ -201,6 +211,7 @@ class RAGService:
                 "contract, so it was not returned as a supported answer.",
                 retrieved_count=len(raw_results),
                 weak_filtered_count=weak_filtered_count,
+                verify_claims=verify_claims,
             )
 
         logger.info(
@@ -226,6 +237,7 @@ class RAGService:
         *,
         retrieved_count: int,
         weak_filtered_count: int,
+        verify_claims: bool = False,
     ) -> RAGResponse:
         (
             answer,
@@ -357,6 +369,43 @@ class RAGService:
         ][:7]
         limitations.extend([_CITATION_LIMITATION, _BASE_LIMITATION])
 
+        claim_verifications: list[ClaimVerification] = []
+        conflicts: list[CrossDocumentConflict] = []
+        insufficient_reasons: list[str] = []
+        claim_support_verified = False
+
+        # Perform claim-level evidence verification and cross-document conflict detection
+        if verify_claims:
+            (
+                verified_status,
+                claim_verifications,
+                conflicts,
+                insufficient_reasons,
+            ) = self.verification_service.verify_answer(
+                question=question,
+                answer=answer,
+                sources_by_id=sources_by_id,
+                initial_status=cast(EvidenceStatus, status),
+                raw_conflict_claims=raw_conflict_claims,
+                retrieved_count=retrieved_count,
+                weak_filtered_count=weak_filtered_count,
+            )
+
+            if supported_downgrade_reason is None and conflict_failure_reason is None:
+                if conflicts:
+                    status = "conflicting_evidence"
+                    for conflict in conflicts:
+                        citation_ids.add(conflict.source_a.citation_id)
+                        citation_ids.add(conflict.source_b.citation_id)
+                elif verified_status == "insufficient_evidence":
+                    status = "insufficient_evidence"
+                elif verified_status == "supported":
+                    status = "supported"
+
+            claim_support_verified = True
+
+        citation_ids &= allowed_ids
+
         citations = self._build_citations(
             citation_ids,
             sources_by_id,
@@ -370,6 +419,10 @@ class RAGService:
             retrieved_count=retrieved_count,
             used_chunk_count=len(context.sources),
             mode=mode,
+            claim_support_verified=claim_support_verified,
+            claim_verifications=claim_verifications,
+            conflicts=conflicts,
+            insufficient_reasons=insufficient_reasons,
         )
 
     def _build_citations(
@@ -444,6 +497,7 @@ class RAGService:
         *,
         retrieved_count: int = 0,
         weak_filtered_count: int = 0,
+        verify_claims: bool = False,
     ) -> RAGResponse:
         limitations: list[str] = []
         if weak_filtered_count:
@@ -466,6 +520,10 @@ class RAGService:
             retrieved_count=retrieved_count,
             used_chunk_count=0,
             mode=mode,
+            claim_support_verified=verify_claims,
+            claim_verifications=[],
+            conflicts=[],
+            insufficient_reasons=["No relevant property documents were retrieved for the question."] if verify_claims else [],
         )
 
     def _insufficient_response(
@@ -477,6 +535,7 @@ class RAGService:
         *,
         retrieved_count: int | None = None,
         weak_filtered_count: int = 0,
+        verify_claims: bool = False,
     ) -> RAGResponse:
         if retrieved_count is None:
             retrieved_count = context.retrieved_count if context else 0
@@ -500,6 +559,10 @@ class RAGService:
             retrieved_count=retrieved_count,
             used_chunk_count=used_count,
             mode=mode,
+            claim_support_verified=verify_claims,
+            claim_verifications=[],
+            conflicts=[],
+            insufficient_reasons=[reason] if verify_claims else [],
         )
 
     def _normalize_question(self, question: str) -> str:

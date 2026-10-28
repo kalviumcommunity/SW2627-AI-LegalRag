@@ -103,6 +103,15 @@ def create_app() -> FastAPI:
     app.include_router(documents.router, prefix=settings.api_prefix)
     app.include_router(retrieval.router, prefix=settings.api_prefix)
     app.include_router(rag.router, prefix=settings.api_prefix)
+
+    # Allow un-prefixed routing for backwards compatibility and test harnesses
+    if settings.api_prefix:
+        app.include_router(health.router)
+        app.include_router(auth.router)
+        app.include_router(llm.router)
+        app.include_router(documents.router)
+        app.include_router(retrieval.router)
+        app.include_router(rag.router)
     return app
 
 

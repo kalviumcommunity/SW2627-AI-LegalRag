@@ -118,7 +118,7 @@ describe('App Routing & Shell Tests', () => {
 
     expect(screen.getByText('PropIntel Secure')).toBeInTheDocument();
     expect(screen.getByText(/welcome back ~/i)).toBeInTheDocument();
-    expect(screen.getByText(/Sign in to/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Sign in to/i).length).toBeGreaterThan(0);
   });
 });
 

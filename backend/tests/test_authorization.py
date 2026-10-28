@@ -12,12 +12,8 @@ from sqlalchemy import create_engine
 from app.api.deps import (
     get_auth_service,
     get_current_user,
-    get_document_ingestion_service,
-    get_document_management_service,
-    get_llm_service,
-    get_rag_service,
-    get_retrieval_service,
 )
+from app.api.routes import documents, rag, retrieval
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import GLOBAL_RATE_LIMITER
 from app.db.base import Base
@@ -25,7 +21,7 @@ from app.db.models import User
 from app.main import create_app
 from app.services.auth_service import AuthService
 from app.services.document_ingestion import DocumentIngestionService
-from app.services.document_management import DocumentManagementService
+from app.services.embedding_service import EmbeddingService
 from app.services.rag_service import RAGService
 from app.services.retrieval_service import RetrievalService
 from tests.fakes import (
@@ -38,9 +34,16 @@ from tests.fakes import (
 )
 
 
+from sqlalchemy.pool import StaticPool
+
+
 @pytest.fixture
 def auth_sqlite_engine():
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine, tables=[User.__table__])
     yield engine
     engine.dispose()
@@ -54,6 +57,7 @@ def auth_service(auth_sqlite_engine):
         access_token_expire_minutes=60,
         rate_limit_upload_per_minute=5,
         rate_limit_rag_per_minute=5,
+        embedding_dimensions=8,
     )
     return AuthService(settings=settings, engine=auth_sqlite_engine)
 
@@ -63,7 +67,7 @@ def shared_stores():
     doc_store = FakeDocumentStore()
     embedding_provider = FakeEmbeddingProvider(dimensions=8)
     retrieval_store = FakeRetrievalStore()
-    llm_service = FakeLLMService(response='{"answer": "Grounded answer.", "evidence_status": "fully_supported", "citations": []}')
+    llm_service = FakeLLMService(response='{"answer": "Grounded answer. [S1]", "evidence_status": "supported", "used_source_ids": [1]}')
     return {
         "doc_store": doc_store,
         "embedding_provider": embedding_provider,
@@ -79,15 +83,19 @@ def client(auth_service, shared_stores):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides[get_auth_service] = lambda: auth_service
     app.dependency_overrides[get_settings] = lambda: auth_service.settings
+    app.dependency_overrides[documents.get_settings_dep] = lambda: auth_service.settings
 
+    embedding_srv = EmbeddingService(
+        auth_service.settings,
+        provider=shared_stores["embedding_provider"],
+    )
     doc_ingestion = DocumentIngestionService(
         store=shared_stores["doc_store"],
-        embedding_service=shared_stores["embedding_provider"],
+        embedding_service=embedding_srv,
     )
-    doc_management = DocumentManagementService(store=shared_stores["doc_store"])
     retrieval_srv = RetrievalService(
         settings=auth_service.settings,
-        embedding_service=shared_stores["embedding_provider"],
+        embedding_service=embedding_srv,
         store=shared_stores["retrieval_store"],
         document_store=shared_stores["doc_store"],
     )
@@ -96,11 +104,12 @@ def client(auth_service, shared_stores):
         llm_service=shared_stores["llm_service"],
     )
 
-    app.dependency_overrides[get_document_ingestion_service] = lambda: doc_ingestion
-    app.dependency_overrides[get_document_management_service] = lambda: doc_management
-    app.dependency_overrides[get_retrieval_service] = lambda: retrieval_srv
-    app.dependency_overrides[get_rag_service] = lambda: rag_srv
-    app.dependency_overrides[get_llm_service] = lambda: shared_stores["llm_service"]
+    app.dependency_overrides[documents.get_ingestion_service] = lambda: doc_ingestion
+    app.dependency_overrides[documents.get_document_store] = lambda: shared_stores["doc_store"]
+    app.dependency_overrides[retrieval.get_retrieval_service] = lambda: retrieval_srv
+    app.dependency_overrides[retrieval.get_retrieval_store] = lambda: shared_stores["retrieval_store"]
+    app.dependency_overrides[rag.get_rag_service] = lambda: rag_srv
+    app.dependency_overrides[rag.get_llm_service] = lambda: shared_stores["llm_service"]
 
     with TestClient(app) as test_client:
         yield test_client

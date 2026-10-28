@@ -41,11 +41,35 @@ If no evidence is supplied, do not answer with this schema; the application hand
 """
 
 
-def build_rag_user_prompt(question: str, evidence_text: str) -> str:
+from typing import Any
+
+
+def build_rag_user_prompt(question: str, evidence_text: str | list[Any]) -> str:
     """Build the bounded user prompt around already-formatted evidence."""
-    evidence = evidence_text.strip() or "(no evidence supplied)"
-    # Disarm delimiter spoofing in question text
-    safe_question = question.replace("<", "&lt;").replace(">", "&gt;").strip()
+    # Disarm delimiter spoofing and dangerous injection tokens in question text
+    # Strip directional override characters and control characters
+    cleaned_q = "".join(ch for ch in question if ch >= " " or ch in "\n\t")
+    safe_question = (
+        cleaned_q.replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .strip()
+    )
+
+    if isinstance(evidence_text, list):
+        chunks_formatted = []
+        for item in evidence_text:
+            chunk_id = getattr(item, "chunk_id", "chk_unknown")
+            text = getattr(item, "text", str(item))
+            # Neutralize any boundary escape attempts
+            clean_text = text.replace("</evidence>", "&lt;/evidence&gt;").replace("</evidence_corpus>", "&lt;/evidence_corpus&gt;")
+            chunks_formatted.append(f'<evidence chunk_id="{chunk_id}">\n{clean_text}\n</evidence>')
+        evidence = "<evidence_corpus>\n" + ("\n\n".join(chunks_formatted) + "\n" if chunks_formatted else "") + "</evidence_corpus>"
+        return (
+            f"{evidence}\n\n"
+            f"<user_question>\n{safe_question}\n</user_question>"
+        )
+
+    evidence = (evidence_text or "").strip() or "(no evidence supplied)"
     return (
         "Question:\n"
         f"{safe_question}\n\n"

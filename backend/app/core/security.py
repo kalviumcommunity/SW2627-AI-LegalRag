@@ -69,18 +69,25 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+import secrets
+
+
 def create_access_token(
-    payload: dict[str, Any],
-    secret_key: str,
+    payload: dict[str, Any] | None = None,
+    secret_key: str = "",
     algorithm: str = "HS256",
     expires_delta: timedelta | None = None,
+    subject: str | None = None,
 ) -> str:
     """Issue a signed JWT access token with an explicit expiration timestamp."""
     if not secret_key:
         raise SecurityError("JWT secret key must be configured.")
-    to_encode = dict(payload)
+    to_encode = dict(payload) if payload else {}
+    if subject is not None:
+        to_encode["sub"] = str(subject)
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=60))
+    to_encode.setdefault("jti", secrets.token_hex(16))
     to_encode.update({
         "iat": now,
         "nbf": now,
