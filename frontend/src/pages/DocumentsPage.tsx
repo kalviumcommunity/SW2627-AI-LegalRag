@@ -18,6 +18,8 @@ import { Modal } from '../components/common/Modal';
 import { UploadZone } from '../components/dashboard/UploadZone';
 import { documentsApi } from '../api/documents';
 import { useToast } from '../components/common/Toast';
+import { useAuth } from '../context/AuthContext';
+import { ApiError } from '../api/client';
 import type { DocumentSummary, IngestionStatus, SourceType } from '../api/types';
 
 interface DocumentsPageProps {
@@ -26,6 +28,7 @@ interface DocumentsPageProps {
 }
 
 export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initialSearch = '' }) => {
+  const { isAuthenticated, openAuthModal } = useAuth();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
@@ -70,6 +73,12 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
       setTotal(res.total || 0);
       setTotalPages(res.total_pages || 1);
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        setDocuments([]);
+        setTotal(0);
+        setTotalPages(1);
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'Failed to fetch documents';
       showError(msg);
     } finally {
@@ -79,7 +88,15 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
 
   useEffect(() => {
     fetchDocuments();
-  }, [fetchDocuments]);
+  }, [fetchDocuments, isAuthenticated]);
+
+  const handleOpenUpload = () => {
+    if (!isAuthenticated) {
+      openAuthModal('login');
+      return;
+    }
+    setIsUploadOpen(true);
+  };
 
   const handleDeleteConfirm = async () => {
     if (!deletingDoc) return;
@@ -136,7 +153,7 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
           </button>
 
           <button
-            onClick={() => setIsUploadOpen(true)}
+            onClick={handleOpenUpload}
             className="btn-primary"
             style={{ backgroundColor: '#7C3AED' }}
           >
@@ -224,7 +241,7 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
               title="No documents matching filters"
               description="Try adjusting your status or format filters, or upload a new property document."
               actionText="Upload Document"
-              onAction={() => setIsUploadOpen(true)}
+              onAction={handleOpenUpload}
             />
           </div>
         ) : (

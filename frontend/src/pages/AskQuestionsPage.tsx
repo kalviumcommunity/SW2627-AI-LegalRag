@@ -13,6 +13,8 @@ import { Skeleton } from '../components/common/Skeleton';
 import { documentsApi } from '../api/documents';
 import { ragApi } from '../api/rag';
 import { useToast } from '../components/common/Toast';
+import { useAuth } from '../context/AuthContext';
+import { ApiError } from '../api/client';
 import type {
   DocumentSummary,
   RAGResponse,
@@ -33,6 +35,7 @@ export const AskQuestionsPage: React.FC<AskQuestionsPageProps> = ({
   initialTopK = 5,
   onInspectDocument,
 }) => {
+  const { isAuthenticated, openAuthModal } = useAuth();
   const [question, setQuestion] = useState<string>(initialQuestion);
   const [selectedDocId, setSelectedDocId] = useState<string>(initialDocId);
   const [mode, setMode] = useState<RetrievalMode>('semantic');
@@ -62,14 +65,14 @@ export const AskQuestionsPage: React.FC<AskQuestionsPageProps> = ({
       }
     };
     fetchDocs();
-  }, []);
+  }, [isAuthenticated]);
 
   // Auto-submit if initial question provided
   useEffect(() => {
-    if (initialQuestion && !currentResponse && !isAsking) {
+    if (initialQuestion && !currentResponse && !isAsking && isAuthenticated) {
       handleAsk(initialQuestion, initialDocId, initialTopK);
     }
-  }, [initialQuestion]);
+  }, [initialQuestion, isAuthenticated]);
 
   const handleAsk = async (
     qToAsk: string,
@@ -78,6 +81,12 @@ export const AskQuestionsPage: React.FC<AskQuestionsPageProps> = ({
   ) => {
     const trimmed = qToAsk.trim();
     if (!trimmed) return;
+
+    if (!isAuthenticated) {
+      showError('Please sign in to ask questions against your documents.');
+      openAuthModal('login');
+      return;
+    }
 
     try {
       setIsAsking(true);
@@ -103,6 +112,11 @@ export const AskQuestionsPage: React.FC<AskQuestionsPageProps> = ({
       setHistory((prev) => [{ question: trimmed, response: res }, ...prev.slice(0, 8)]);
       showSuccess('Grounded answer generated');
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        showError('Session expired. Please sign in again.');
+        openAuthModal('login');
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'RAG query failed';
       showError(msg);
     } finally {

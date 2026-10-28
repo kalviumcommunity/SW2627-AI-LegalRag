@@ -103,4 +103,22 @@ describe('App Routing & Shell Tests', () => {
       expect(screen.getByText('FastAPI Backend Service')).toBeInTheDocument();
     });
   });
+
+  it('opens AuthModal when Sign In is clicked', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    const signInBtn = screen.getByRole('button', { name: /sign in/i });
+    expect(signInBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(signInBtn);
+    });
+
+    expect(screen.getByText('PropIntel Secure')).toBeInTheDocument();
+    expect(screen.getByText(/welcome back ~/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sign in to/i)).toBeInTheDocument();
+  });
 });
+

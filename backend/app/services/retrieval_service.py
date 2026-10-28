@@ -1,4 +1,4 @@
-﻿"""Semantic and hybrid retrieval over stored document chunks.
+"""Semantic and hybrid retrieval over stored document chunks.
 
 The service owns query validation, query embedding, ranking, fusion, and safe
 error handling. It has no FastAPI dependency so it can be reused by the API,
@@ -31,6 +31,7 @@ from app.schemas.retrieval import (
     RetrievalSearchResponse,
     ScoreType,
 )
+from app.services.document_store import DocumentStore, create_document_store
 from app.services.embedding_service import EmbeddingError, EmbeddingService
 from app.services.retrieval_errors import (
     RetrievalConfigurationError,
@@ -79,12 +80,14 @@ class RetrievalService:
         *,
         embedding_service: EmbeddingService | None = None,
         store: RetrievalStore | None = None,
+        document_store: DocumentStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.embedding_service = embedding_service or EmbeddingService(
             self.settings
         )
         self.store = store or create_retrieval_store(self.settings)
+        self.document_store = document_store or create_document_store(self.settings)
 
     def search(
         self,
@@ -95,6 +98,7 @@ class RetrievalService:
         document_id: str | None = None,
         filters: RetrievalFilters | None = None,
         min_score: float | None = None,
+        owner_id: str | None = None,
     ) -> RetrievalOutcome:
         """Retrieve the most relevant chunks for ``query``.
 
@@ -106,7 +110,16 @@ class RetrievalService:
         requested_top_k = self._validate_top_k(top_k)
         selected_mode = self._validate_mode(mode)
         threshold = self._validate_min_score(min_score)
-        search_filters = _to_search_filters(document_id, filters)
+
+        # Validate client-supplied document filter against authenticated user
+        if document_id is not None and owner_id is not None:
+            doc = self.document_store.get_document(document_id, owner_id=owner_id)
+            if doc is None:
+                raise RetrievalQueryError(
+                    f"Document '{document_id}' not found or access denied."
+                )
+
+        search_filters = _to_search_filters(document_id, filters, owner_id=owner_id)
         filter_fields = _used_filter_fields(search_filters)
 
         try:
@@ -396,7 +409,9 @@ class RetrievalService:
 
 
 def _to_search_filters(
-    document_id: str | None, filters: RetrievalFilters | None
+    document_id: str | None,
+    filters: RetrievalFilters | None,
+    owner_id: str | None = None,
 ) -> SearchFilters:
     metadata_filters = filters or RetrievalFilters()
     return SearchFilters(
@@ -404,6 +419,7 @@ def _to_search_filters(
         source_filename=metadata_filters.source_filename,
         source_type=metadata_filters.source_type,
         page_number=metadata_filters.page_number,
+        owner_id=owner_id,
     )
 
 

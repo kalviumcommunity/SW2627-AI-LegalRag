@@ -76,6 +76,7 @@ class DocumentSummary(BaseModel):
     page_count: int | None = Field(default=None, ge=0, description="Total pages if paginated.")
     warnings: list[str] = Field(default_factory=list, description="Warnings recorded during processing.")
     detail: str | None = Field(default=None, description="Detailed processing status or explanation.")
+    owner_id: str | None = Field(default=None, description="Identifier of the user who owns the document.")
     created_at: datetime | None = Field(default=None, description="When the document record was created.")
     updated_at: datetime | None = Field(default=None, description="When the document record was last updated.")
 
@@ -93,6 +94,7 @@ class DocumentDetailResponse(BaseModel):
     page_count: int | None = Field(default=None, ge=0, description="Total pages if paginated.")
     warnings: list[str] = Field(default_factory=list, description="Warnings recorded during processing.")
     detail: str | None = Field(default=None, description="Detailed processing status or explanation.")
+    owner_id: str | None = Field(default=None, description="Identifier of the user who owns the document.")
     created_at: datetime | None = Field(default=None, description="When the document record was created.")
     updated_at: datetime | None = Field(default=None, description="When the document record was last updated.")
 

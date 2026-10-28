@@ -44,9 +44,11 @@ If no evidence is supplied, do not answer with this schema; the application hand
 def build_rag_user_prompt(question: str, evidence_text: str) -> str:
     """Build the bounded user prompt around already-formatted evidence."""
     evidence = evidence_text.strip() or "(no evidence supplied)"
+    # Disarm delimiter spoofing in question text
+    safe_question = question.replace("<", "&lt;").replace(">", "&gt;").strip()
     return (
         "Question:\n"
-        f"{question}\n\n"
+        f"{safe_question}\n\n"
         "Retrieved evidence:\n"
         f"{evidence}\n\n"
         "Return the JSON object now."

@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { Sidebar, NavPage } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { ToastProvider } from './components/common/Toast';
+import { AuthProvider } from './context/AuthContext';
+import { AuthModal } from './components/auth/AuthModal';
 import { HomePage } from './pages/HomePage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { DocumentDetailPage } from './pages/DocumentDetailPage';
 import { AskQuestionsPage } from './pages/AskQuestionsPage';
 import { SettingsPage } from './pages/SettingsPage';
 
-export const App: React.FC = () => {
+export const AppContent: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<NavPage>('home');
   const [activeDocId, setActiveDocId] = useState<string>('');
   const [activeQuestion, setActiveQuestion] = useState<string>('');
@@ -49,55 +51,65 @@ export const App: React.FC = () => {
   };
 
   return (
-    <ToastProvider>
-      <div className="app-container">
-        {/* Left Sidebar */}
-        <Sidebar
-          currentPage={currentPage}
-          onNavigate={(p) => handleNavigate(p)}
-        />
+    <div className="app-container">
+      {/* Left Sidebar */}
+      <Sidebar
+        currentPage={currentPage}
+        onNavigate={(p) => handleNavigate(p)}
+      />
 
-        {/* Main Content Area */}
-        <div className="main-wrapper">
-          <Topbar onSearch={handleGlobalSearch} searchTerm={searchQuery} />
+      {/* Main Content Area */}
+      <div className="main-wrapper">
+        <Topbar onSearch={handleGlobalSearch} searchTerm={searchQuery} />
 
-          <main style={{ flex: 1 }}>
-            {currentPage === 'home' && (
-              <HomePage
-                onNavigate={handleNavigate}
-                searchTerm={searchQuery}
-              />
-            )}
+        <main style={{ flex: 1 }}>
+          {currentPage === 'home' && (
+            <HomePage
+              onNavigate={handleNavigate}
+              searchTerm={searchQuery}
+            />
+          )}
 
-            {currentPage === 'documents' && (
-              <DocumentsPage
-                onNavigate={handleNavigate}
-                initialSearch={searchQuery}
-              />
-            )}
+          {currentPage === 'documents' && (
+            <DocumentsPage
+              onNavigate={handleNavigate}
+              initialSearch={searchQuery}
+            />
+          )}
 
-            {currentPage === 'doc-detail' && (
-              <DocumentDetailPage
-                documentId={activeDocId}
-                onBack={() => handleNavigate('documents')}
-                onAskDoc={(docId) => handleNavigate('ask', { docId })}
-              />
-            )}
+          {currentPage === 'doc-detail' && (
+            <DocumentDetailPage
+              documentId={activeDocId}
+              onBack={() => handleNavigate('documents')}
+              onAskDoc={(docId) => handleNavigate('ask', { docId })}
+            />
+          )}
 
-            {currentPage === 'ask' && (
-              <AskQuestionsPage
-                initialQuestion={activeQuestion}
-                initialDocId={activeDocId}
-                initialTopK={activeTopK}
-                onInspectDocument={(docId) => handleNavigate('doc-detail', { docId })}
-              />
-            )}
+          {currentPage === 'ask' && (
+            <AskQuestionsPage
+              initialQuestion={activeQuestion}
+              initialDocId={activeDocId}
+              initialTopK={activeTopK}
+              onInspectDocument={(docId) => handleNavigate('doc-detail', { docId })}
+            />
+          )}
 
-            {currentPage === 'settings' && <SettingsPage />}
-          </main>
-        </div>
+          {currentPage === 'settings' && <SettingsPage />}
+        </main>
       </div>
-    </ToastProvider>
+
+      <AuthModal />
+    </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
+    </AuthProvider>
   );
 };
 

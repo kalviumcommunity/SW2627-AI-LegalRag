@@ -4,8 +4,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import documents, health, llm, rag, retrieval
+from app.api.routes import auth, documents, health, llm, rag, retrieval
 from app.core.config import get_settings
+from app.services.auth_service import AuthError
 from app.services.ingestion_errors import DocumentIngestionError
 from app.services.llm_service import (
     LLMAuthenticationError,
@@ -27,10 +28,11 @@ def create_app() -> FastAPI:
             "LLM chat endpoint, document ingestion/chunking, persistent "
             "PostgreSQL/pgvector storage, semantic/hybrid retrieval with "
             "metadata filters, Phase 5 grounded RAG answers with validated "
-            "citations and evidence-status reporting, and Phase 6 document "
-            "management and lifecycle workflows."
+            "citations and evidence-status reporting, Phase 6 document "
+            "management and lifecycle workflows, and Phase 8 user authentication "
+            "and document-level authorization."
         ),
-        version="0.6.0",
+        version="0.8.0",
     )
 
     # Map service errors raised in dependencies (e.g. missing API key at
@@ -69,6 +71,11 @@ def create_app() -> FastAPI:
             status_code=exc.status_code, content={"detail": exc.message}
         )
 
+    async def _auth_handler(_: Request, exc: AuthError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": exc.message}
+        )
+
     app.add_exception_handler(LLMConfigurationError, _llm_config_handler)
     app.add_exception_handler(LLMRateLimitError, _llm_rate_limit_handler)
     app.add_exception_handler(LLMTimeoutError, _llm_timeout_handler)
@@ -77,16 +84,21 @@ def create_app() -> FastAPI:
     app.add_exception_handler(DocumentIngestionError, _document_ingestion_handler)
     app.add_exception_handler(RetrievalError, _retrieval_handler)
     app.add_exception_handler(RAGError, _rag_handler)
+    app.add_exception_handler(AuthError, _auth_handler)
+
+    cors_origins = [o.strip() for o in (settings.cors_origins or "*").split(",") if o.strip()]
+    allow_wildcard = "*" in cors_origins or not cors_origins
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
+        allow_origins=["*"] if allow_wildcard else cors_origins,
+        allow_credentials=not allow_wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(llm.router, prefix=settings.api_prefix)
     app.include_router(documents.router, prefix=settings.api_prefix)
     app.include_router(retrieval.router, prefix=settings.api_prefix)

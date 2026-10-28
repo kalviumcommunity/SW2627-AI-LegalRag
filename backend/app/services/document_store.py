@@ -239,7 +239,7 @@ class DocumentStore(Protocol):
     def ensure_ready(self) -> None: ...
 
     def find_by_content_hash(
-        self, content_hash: str, filename: str
+        self, content_hash: str, filename: str, owner_id: str | None = None
     ) -> IngestResponse | None: ...
 
     def save(
@@ -247,10 +247,11 @@ class DocumentStore(Protocol):
         response: IngestResponse,
         content_hash: str,
         embeddings: list[list[float]],
+        owner_id: str | None = None,
     ) -> IngestResponse: ...
 
     def get_document(
-        self, document_id: str
+        self, document_id: str, owner_id: str | None = None
     ) -> DocumentDetailResponse | None: ...
 
     def list_documents(
@@ -260,6 +261,7 @@ class DocumentStore(Protocol):
         offset: int = 0,
         status: str | None = None,
         source_type: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]: ...
 
     def get_document_chunks(
@@ -269,9 +271,12 @@ class DocumentStore(Protocol):
         limit: int = 20,
         offset: int = 0,
         include_text: bool = False,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentChunkSummary], int] | None: ...
 
-    def delete_document(self, document_id: str) -> bool: ...
+    def delete_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> bool: ...
 
 
 class UnavailableDocumentStore:
@@ -284,7 +289,7 @@ class UnavailableDocumentStore:
         )
 
     def find_by_content_hash(
-        self, content_hash: str, filename: str
+        self, content_hash: str, filename: str, owner_id: str | None = None
     ) -> IngestResponse | None:
         self.ensure_ready()
         return None
@@ -294,12 +299,13 @@ class UnavailableDocumentStore:
         response: IngestResponse,
         content_hash: str,
         embeddings: list[list[float]],
+        owner_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         return response
 
     def get_document(
-        self, document_id: str
+        self, document_id: str, owner_id: str | None = None
     ) -> DocumentDetailResponse | None:
         self.ensure_ready()
         return None
@@ -311,6 +317,7 @@ class UnavailableDocumentStore:
         offset: int = 0,
         status: str | None = None,
         source_type: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         return [], 0
@@ -322,11 +329,14 @@ class UnavailableDocumentStore:
         limit: int = 20,
         offset: int = 0,
         include_text: bool = False,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentChunkSummary], int] | None:
         self.ensure_ready()
         return None
 
-    def delete_document(self, document_id: str) -> bool:
+    def delete_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> bool:
         self.ensure_ready()
         return False
 
@@ -382,14 +392,18 @@ class SqlAlchemyDocumentStore:
     # --- reads -----------------------------------------------------------
 
     def find_by_content_hash(
-        self, content_hash: str, filename: str
+        self, content_hash: str, filename: str, owner_id: str | None = None
     ) -> IngestResponse | None:
         self.ensure_ready()
         try:
             with self._get_session_factory()() as session:
-                document = session.query(Document).filter_by(
-                    content_sha256=content_hash, filename=filename
-                ).one_or_none()
+                query = session.query(Document).filter(
+                    Document.content_sha256 == content_hash,
+                    Document.filename == filename,
+                )
+                if owner_id is not None:
+                    query = query.filter(Document.owner_id == owner_id)
+                document = query.one_or_none()
                 if document is None:
                     return None
                 return _to_response(document)
@@ -409,6 +423,7 @@ class SqlAlchemyDocumentStore:
         response: IngestResponse,
         content_hash: str,
         embeddings: list[list[float]],
+        owner_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         if len(embeddings) != len(response.chunks):
@@ -421,11 +436,14 @@ class SqlAlchemyDocumentStore:
                     "An embedding does not match the configured dimensions."
                 )
 
+        resolved_owner_id = owner_id or "usr_legacy_admin"
+
         try:
             with self._get_session_factory()() as session:
                 with session.begin():
                     document = Document(
                         id=response.document_id,
+                        owner_id=resolved_owner_id,
                         filename=response.filename,
                         source_type=(
                             response.chunks[0].source_type
@@ -461,7 +479,9 @@ class SqlAlchemyDocumentStore:
         except IntegrityError as exc:
             # A concurrent request may have inserted the same document after
             # our duplicate check. Return the committed record if it exists.
-            existing = self.find_by_content_hash(content_hash, response.filename)
+            existing = self.find_by_content_hash(
+                content_hash, response.filename, owner_id=resolved_owner_id
+            )
             if existing is not None:
                 return existing
             raise DatabaseWriteError(
@@ -477,15 +497,16 @@ class SqlAlchemyDocumentStore:
                 "The document could not be stored; no records were committed."
             ) from exc
 
-    def get_document(self, document_id: str) -> DocumentDetailResponse | None:
+    def get_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> DocumentDetailResponse | None:
         self.ensure_ready()
         try:
             with self._get_session_factory()() as session:
-                document = (
-                    session.query(Document)
-                    .filter(Document.id == document_id)
-                    .one_or_none()
-                )
+                query = session.query(Document).filter(Document.id == document_id)
+                if owner_id is not None:
+                    query = query.filter(Document.owner_id == owner_id)
+                document = query.one_or_none()
                 if document is None:
                     return None
                 return DocumentDetailResponse(
@@ -499,6 +520,7 @@ class SqlAlchemyDocumentStore:
                     page_count=document.page_count,
                     warnings=list(document.warnings or []),
                     detail=document.detail,
+                    owner_id=document.owner_id,
                     created_at=document.created_at,
                     updated_at=document.updated_at,
                 )
@@ -518,11 +540,14 @@ class SqlAlchemyDocumentStore:
         offset: int = 0,
         status: str | None = None,
         source_type: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         try:
             with self._get_session_factory()() as session:
                 query = session.query(Document)
+                if owner_id is not None:
+                    query = query.filter(Document.owner_id == owner_id)
                 if status is not None:
                     query = query.filter(Document.status == status)
                 if source_type is not None:
@@ -545,6 +570,7 @@ class SqlAlchemyDocumentStore:
                         page_count=doc.page_count,
                         warnings=list(doc.warnings or []),
                         detail=doc.detail,
+                        owner_id=doc.owner_id,
                         created_at=doc.created_at,
                         updated_at=doc.updated_at,
                     )
@@ -567,15 +593,15 @@ class SqlAlchemyDocumentStore:
         limit: int = 20,
         offset: int = 0,
         include_text: bool = False,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentChunkSummary], int] | None:
         self.ensure_ready()
         try:
             with self._get_session_factory()() as session:
-                doc_exists = (
-                    session.query(Document.id)
-                    .filter(Document.id == document_id)
-                    .scalar()
-                )
+                doc_query = session.query(Document.id).filter(Document.id == document_id)
+                if owner_id is not None:
+                    doc_query = doc_query.filter(Document.owner_id == owner_id)
+                doc_exists = doc_query.scalar()
                 if doc_exists is None:
                     return None
                 chunk_query = session.query(Chunk).filter(
@@ -613,16 +639,17 @@ class SqlAlchemyDocumentStore:
                 "Document chunks could not be read."
             ) from exc
 
-    def delete_document(self, document_id: str) -> bool:
+    def delete_document(
+        self, document_id: str, owner_id: str | None = None
+    ) -> bool:
         self.ensure_ready()
         try:
             with self._get_session_factory()() as session:
                 with session.begin():
-                    doc = (
-                        session.query(Document)
-                        .filter(Document.id == document_id)
-                        .one_or_none()
-                    )
+                    query = session.query(Document).filter(Document.id == document_id)
+                    if owner_id is not None:
+                        query = query.filter(Document.owner_id == owner_id)
+                    doc = query.one_or_none()
                     if doc is None:
                         return False
                     session.delete(doc)

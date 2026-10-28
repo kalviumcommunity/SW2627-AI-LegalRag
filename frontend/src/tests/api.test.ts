@@ -151,4 +151,62 @@ describe('API Client & Contract Tests', () => {
       })
     );
   });
+
+  it('attaches Authorization header when auth token is set', async () => {
+    const { setAuthToken } = await import('../api/client');
+    setAuthToken('test-jwt-token-12345');
+
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'ok' }),
+    } as Response);
+
+    await apiClient('/documents');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/documents',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-jwt-token-12345',
+        }),
+      })
+    );
+
+    setAuthToken(null);
+  });
+
+  it('authApi.login sends credentials and stores token', async () => {
+    const { authApi } = await import('../api/auth');
+    const { getAuthToken, setAuthToken } = await import('../api/client');
+    setAuthToken(null);
+
+    const mockTokenResp = {
+      access_token: 'signed-access-token-abc',
+      token_type: 'bearer',
+      user: {
+        id: 'usr_1',
+        email: 'user@example.com',
+        is_active: true,
+      },
+    };
+
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => mockTokenResp,
+    } as Response);
+
+    const res = await authApi.login({
+      email: 'user@example.com',
+      password: 'Password123!',
+    });
+
+    expect(res.access_token).toBe('signed-access-token-abc');
+    expect(getAuthToken()).toBe('signed-access-token-abc');
+
+    authApi.logout();
+    expect(getAuthToken()).toBeNull();
+  });
 });
+

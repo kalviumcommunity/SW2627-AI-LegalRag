@@ -13,6 +13,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -32,13 +33,38 @@ from app.db.base import Base
 SCHEMA_VECTOR_DIMENSIONS = 768
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         UniqueConstraint(
+            "owner_id",
             "content_sha256",
             "filename",
-            name="uq_documents_content_sha256_filename",
+            name="uq_documents_owner_content_filename",
         ),
         CheckConstraint(
             "status IN ('processed', 'ocr_required')",
@@ -49,9 +75,16 @@ class Document(Base):
             "extracted_characters >= 0",
             name="ck_documents_extracted_characters",
         ),
+        Index("ix_documents_owner_id", "owner_id"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -71,6 +104,7 @@ class Document(Base):
         onupdate=func.now(),
     )
 
+    owner: Mapped[User] = relationship(back_populates="documents")
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",

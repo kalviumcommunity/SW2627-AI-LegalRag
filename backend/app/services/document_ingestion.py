@@ -66,7 +66,11 @@ class DocumentIngestionService:
         self.store = store or create_document_store(self.settings)
 
     def ingest(
-        self, data: bytes, filename: str | None, content_type: str | None
+        self,
+        data: bytes,
+        filename: str | None,
+        content_type: str | None,
+        owner_id: str | None = None,
     ) -> IngestResponse:
         document_id = _new_identifier("doc")
         upload = validate_upload(data, filename, content_type, self.settings)
@@ -99,6 +103,7 @@ class DocumentIngestionService:
                     self._ocr_required(document_id, upload, extraction),
                     content_hash,
                     [],
+                    owner_id=owner_id,
                 )
             raise DocumentValidationError(
                 "The document contains no readable text after cleaning."
@@ -124,7 +129,9 @@ class DocumentIngestionService:
 
         # Identical uploads are idempotent: return the committed record without
         # spending another embedding call or writing duplicate rows.
-        existing = self.store.find_by_content_hash(content_hash, upload.filename)
+        existing = self.store.find_by_content_hash(
+            content_hash, upload.filename, owner_id=owner_id
+        )
         if existing is not None:
             return existing
 
@@ -143,6 +150,7 @@ class DocumentIngestionService:
             ),
             content_hash,
             embeddings,
+            owner_id=owner_id,
         )
 
     def _persist(
@@ -150,14 +158,15 @@ class DocumentIngestionService:
         response: IngestResponse,
         content_hash: str,
         embeddings: list[list[float]],
+        owner_id: str | None = None,
     ) -> IngestResponse:
         """Check for an existing identical upload, then commit atomically."""
         existing = self.store.find_by_content_hash(
-            content_hash, response.filename
+            content_hash, response.filename, owner_id=owner_id
         )
         if existing is not None:
             return existing
-        return self.store.save(response, content_hash, embeddings)
+        return self.store.save(response, content_hash, embeddings, owner_id=owner_id)
 
     def _extract(self, upload: ValidatedUpload) -> ExtractionResult:
         extractor = get_extractor(upload.extension)

@@ -42,6 +42,7 @@ class SearchFilters:
     source_filename: str | None = None
     source_type: str | None = None
     page_number: int | None = None
+    owner_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -289,6 +290,10 @@ class SqlAlchemyRetrievalStore:
 
     @staticmethod
     def _apply_filters(statement, filters: SearchFilters):
+        if filters.owner_id is not None:
+            statement = statement.where(
+                Document.owner_id == filters.owner_id
+            )
         if filters.document_id is not None:
             statement = statement.where(
                 Chunk.document_id == filters.document_id

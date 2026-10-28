@@ -27,6 +27,35 @@ interface RequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
+let inMemoryToken: string | null = null;
+
+export const setAuthToken = (token: string | null): void => {
+  inMemoryToken = token;
+  try {
+    if (token) {
+      sessionStorage.setItem('propertyintel_auth_token', token);
+    } else {
+      sessionStorage.removeItem('propertyintel_auth_token');
+    }
+  } catch {
+    // Non-browser or storage restricted environment
+  }
+};
+
+export const getAuthToken = (): string | null => {
+  if (inMemoryToken) return inMemoryToken;
+  try {
+    const stored = sessionStorage.getItem('propertyintel_auth_token');
+    if (stored) {
+      inMemoryToken = stored;
+      return stored;
+    }
+  } catch {
+    // Storage restricted
+  }
+  return null;
+};
+
 export async function apiClient<T>(
   endpoint: string,
   options: RequestOptions = {}
@@ -41,8 +70,10 @@ export async function apiClient<T>(
 
   try {
     const isFormData = restOptions.body instanceof FormData;
+    const token = getAuthToken();
     const finalHeaders: Record<string, string> = {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...((headers as Record<string, string>) || {}),
     };
 
