@@ -80,6 +80,7 @@ async def ask_question(
         top_k=payload.top_k,
         mode=payload.mode,
         document_id=payload.document_id,
+        property_id=payload.property_id,
         filters=payload.filters,
         min_score=payload.min_score,
         owner_id=current_user.id,

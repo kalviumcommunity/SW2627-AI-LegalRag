@@ -11,6 +11,11 @@ from app.db.models import User
 from app.schemas.retrieval import RetrievalSearchRequest, RetrievalSearchResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.retrieval_service import RetrievalService
+from app.services.document_store import (
+    DocumentStore,
+    create_document_store,
+)
+from app.services.property_service import PropertyService
 from app.services.retrieval_store import (
     RetrievalStore,
     create_retrieval_store,
@@ -35,15 +40,35 @@ def get_retrieval_store(
     return create_retrieval_store(settings)
 
 
+def get_document_store(
+    settings: Settings = Depends(get_settings_dep),
+) -> DocumentStore | None:
+    if not settings.is_database_configured:
+        return None
+    return create_document_store(settings)
+
+
+def get_property_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> PropertyService | None:
+    if not settings.is_database_configured:
+        return None
+    return PropertyService(settings)
+
+
 def get_retrieval_service(
     settings: Settings = Depends(get_settings_dep),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     store: RetrievalStore = Depends(get_retrieval_store),
+    document_store: DocumentStore | None = Depends(get_document_store),
+    property_service: PropertyService | None = Depends(get_property_service),
 ) -> RetrievalService:
     return RetrievalService(
         settings,
         embedding_service=embedding_service,
         store=store,
+        document_store=document_store,
+        property_service=property_service,
     )
 
 
@@ -83,6 +108,7 @@ async def search_documents(
         top_k=payload.top_k,
         mode=payload.mode,
         document_id=payload.document_id,
+        property_id=payload.property_id,
         filters=payload.filters,
         min_score=payload.min_score,
         owner_id=current_user.id,

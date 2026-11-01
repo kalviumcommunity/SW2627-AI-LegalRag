@@ -77,6 +77,7 @@ class DocumentSummary(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Warnings recorded during processing.")
     detail: str | None = Field(default=None, description="Detailed processing status or explanation.")
     owner_id: str | None = Field(default=None, description="Identifier of the user who owns the document.")
+    property_id: str | None = Field(default=None, description="Identifier of the associated property, if assigned.")
     created_at: datetime | None = Field(default=None, description="When the document record was created.")
     updated_at: datetime | None = Field(default=None, description="When the document record was last updated.")
 
@@ -95,6 +96,7 @@ class DocumentDetailResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Warnings recorded during processing.")
     detail: str | None = Field(default=None, description="Detailed processing status or explanation.")
     owner_id: str | None = Field(default=None, description="Identifier of the user who owns the document.")
+    property_id: str | None = Field(default=None, description="Identifier of the associated property, if assigned.")
     created_at: datetime | None = Field(default=None, description="When the document record was created.")
     updated_at: datetime | None = Field(default=None, description="When the document record was last updated.")
 

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -55,6 +56,78 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    properties: Mapped[list["Property"]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class Property(Base):
+    __tablename__ = "properties"
+    __table_args__ = (
+        Index("ix_properties_owner_id", "owner_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    property_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    area: Mapped[float | None] = mapped_column(Float, nullable=True)
+    area_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped[User] = relationship(back_populates="properties")
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="property",
+        foreign_keys="Document.property_id",
+    )
+    associated_documents: Mapped[list["PropertyDocument"]] = relationship(
+        back_populates="property",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class PropertyDocument(Base):
+    __tablename__ = "property_documents"
+    __table_args__ = (
+        Index("ix_property_documents_property_id", "property_id"),
+        Index("ix_property_documents_document_id", "document_id"),
+    )
+
+    property_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    property: Mapped[Property] = relationship(back_populates="associated_documents")
+    document: Mapped["Document"] = relationship(back_populates="property_associations")
 
 
 class Document(Base):
@@ -76,6 +149,7 @@ class Document(Base):
             name="ck_documents_extracted_characters",
         ),
         Index("ix_documents_owner_id", "owner_id"),
+        Index("ix_documents_property_id", "property_id"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -83,7 +157,11 @@ class Document(Base):
         String(64),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
+    )
+    property_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("properties.id", ondelete="SET NULL"),
+        nullable=True,
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -105,6 +183,15 @@ class Document(Base):
     )
 
     owner: Mapped[User] = relationship(back_populates="documents")
+    property: Mapped[Property | None] = relationship(
+        back_populates="documents",
+        foreign_keys=[property_id],
+    )
+    property_associations: Mapped[list[PropertyDocument]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",

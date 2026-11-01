@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, documents, health, llm, rag, retrieval
+from app.api.routes import auth, documents, health, llm, properties, rag, retrieval
 from app.core.config import get_settings
 from app.services.auth_service import AuthError
 from app.services.ingestion_errors import DocumentIngestionError
@@ -15,6 +15,7 @@ from app.services.llm_service import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
+from app.services.property_errors import PropertyError
 from app.services.rag_errors import RAGError
 from app.services.retrieval_errors import RetrievalError
 
@@ -76,6 +77,11 @@ def create_app() -> FastAPI:
             status_code=exc.status_code, content={"detail": exc.message}
         )
 
+    async def _property_handler(_: Request, exc: PropertyError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": exc.message}
+        )
+
     app.add_exception_handler(LLMConfigurationError, _llm_config_handler)
     app.add_exception_handler(LLMRateLimitError, _llm_rate_limit_handler)
     app.add_exception_handler(LLMTimeoutError, _llm_timeout_handler)
@@ -85,6 +91,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RetrievalError, _retrieval_handler)
     app.add_exception_handler(RAGError, _rag_handler)
     app.add_exception_handler(AuthError, _auth_handler)
+    app.add_exception_handler(PropertyError, _property_handler)
 
     cors_origins = [o.strip() for o in (settings.cors_origins or "*").split(",") if o.strip()]
     allow_wildcard = "*" in cors_origins or not cors_origins
@@ -100,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(llm.router, prefix=settings.api_prefix)
+    app.include_router(properties.router, prefix=settings.api_prefix)
     app.include_router(documents.router, prefix=settings.api_prefix)
     app.include_router(retrieval.router, prefix=settings.api_prefix)
     app.include_router(rag.router, prefix=settings.api_prefix)
@@ -109,6 +117,7 @@ def create_app() -> FastAPI:
         app.include_router(health.router)
         app.include_router(auth.router)
         app.include_router(llm.router)
+        app.include_router(properties.router)
         app.include_router(documents.router)
         app.include_router(retrieval.router)
         app.include_router(rag.router)
