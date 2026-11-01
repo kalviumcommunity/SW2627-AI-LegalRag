@@ -68,6 +68,7 @@ class FakeDocumentStore:
         self.records: dict[tuple[str, str], IngestResponse] = {}
         self.by_id: dict[str, IngestResponse] = {}
         self.owners: dict[str, str] = {}
+        self.properties: dict[str, str | None] = {}
         self.content_hashes: dict[str, str] = {}
         self.created_at: dict[str, datetime] = {}
         self.saved_embeddings: list[list[list[float]]] = []
@@ -94,6 +95,7 @@ class FakeDocumentStore:
         content_hash: str,
         embeddings: list[list[float]],
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         self.save_calls += 1
@@ -102,6 +104,8 @@ class FakeDocumentStore:
         key = (content_hash, response.filename)
         existing = self.records.get(key)
         if existing is not None and (owner_id is None or self.owners.get(existing.document_id) == owner_id):
+            if property_id is not None:
+                self.properties[existing.document_id] = property_id
             return existing.model_copy(deep=True)
         copied = response.model_copy(deep=True)
         now = datetime.now()
@@ -109,6 +113,7 @@ class FakeDocumentStore:
         self.records[key] = copied
         self.by_id[response.document_id] = copied
         self.owners[response.document_id] = resolved_owner
+        self.properties[response.document_id] = property_id
         self.content_hashes[response.document_id] = content_hash
         self.created_at[response.document_id] = now
         self.saved_embeddings.append(embeddings)
@@ -140,6 +145,7 @@ class FakeDocumentStore:
             warnings=list(stored.warnings),
             detail=stored.detail,
             owner_id=self.owners.get(document_id, "usr_test_default"),
+            property_id=self.properties.get(document_id),
             created_at=self.created_at.get(document_id),
             updated_at=self.created_at.get(document_id),
         )
@@ -152,11 +158,14 @@ class FakeDocumentStore:
         status: str | None = None,
         source_type: str | None = None,
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         docs = list(self.by_id.values())
         if owner_id is not None:
             docs = [d for d in docs if self.owners.get(d.document_id) == owner_id]
+        if property_id is not None:
+            docs = [d for d in docs if self.properties.get(d.document_id) == property_id]
         filtered = []
         for doc in docs:
             doc_source_type = doc.chunks[0].source_type if doc.chunks else (
@@ -180,6 +189,7 @@ class FakeDocumentStore:
                     warnings=list(doc.warnings),
                     detail=doc.detail,
                     owner_id=self.owners.get(doc.document_id, "usr_test_default"),
+                    property_id=self.properties.get(doc.document_id),
                     created_at=self.created_at.get(doc.document_id),
                     updated_at=self.created_at.get(doc.document_id),
                 )

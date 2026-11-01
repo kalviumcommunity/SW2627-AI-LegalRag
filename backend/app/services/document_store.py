@@ -24,7 +24,7 @@ from sqlalchemy.exc import (
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.db.models import Chunk, Document
+from app.db.models import Chunk, Document, Property, PropertyDocument
 from app.schemas.documents import (
     DocumentChunk,
     DocumentChunkSummary,
@@ -248,6 +248,7 @@ class DocumentStore(Protocol):
         content_hash: str,
         embeddings: list[list[float]],
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> IngestResponse: ...
 
     def get_document(
@@ -262,6 +263,7 @@ class DocumentStore(Protocol):
         status: str | None = None,
         source_type: str | None = None,
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]: ...
 
     def get_document_chunks(
@@ -300,6 +302,7 @@ class UnavailableDocumentStore:
         content_hash: str,
         embeddings: list[list[float]],
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         return response
@@ -318,6 +321,7 @@ class UnavailableDocumentStore:
         status: str | None = None,
         source_type: str | None = None,
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         return [], 0
@@ -424,8 +428,38 @@ class SqlAlchemyDocumentStore:
         content_hash: str,
         embeddings: list[list[float]],
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
+        resolved_owner_id = owner_id or "usr_legacy_admin"
+
+        # If document already exists for this owner, associate and return without re-embedding
+        try:
+            with self._get_session_factory()() as session:
+                existing = session.query(Document).filter(
+                    Document.content_sha256 == content_hash,
+                    Document.filename == response.filename,
+                    Document.owner_id == resolved_owner_id,
+                ).one_or_none()
+                if existing is not None:
+                    if property_id is not None:
+                        with session.begin():
+                            existing.property_id = property_id
+                            assoc = session.query(PropertyDocument).filter(
+                                PropertyDocument.property_id == property_id,
+                                PropertyDocument.document_id == existing.id,
+                            ).one_or_none()
+                            if assoc is None:
+                                session.add(
+                                    PropertyDocument(
+                                        property_id=property_id,
+                                        document_id=existing.id,
+                                    )
+                                )
+                    return _to_response(existing)
+        except (OperationalError, SQLAlchemyError):
+            pass
+
         if len(embeddings) != len(response.chunks):
             raise DatabaseWriteError(
                 "Embedding count does not match the number of chunks."
@@ -436,14 +470,13 @@ class SqlAlchemyDocumentStore:
                     "An embedding does not match the configured dimensions."
                 )
 
-        resolved_owner_id = owner_id or "usr_legacy_admin"
-
         try:
             with self._get_session_factory()() as session:
                 with session.begin():
                     document = Document(
                         id=response.document_id,
                         owner_id=resolved_owner_id,
+                        property_id=property_id,
                         filename=response.filename,
                         source_type=(
                             response.chunks[0].source_type
@@ -459,6 +492,13 @@ class SqlAlchemyDocumentStore:
                         detail=response.detail,
                     )
                     session.add(document)
+                    if property_id is not None:
+                        session.add(
+                            PropertyDocument(
+                                property_id=property_id,
+                                document_id=response.document_id,
+                            )
+                        )
                     for chunk, vector in zip(response.chunks, embeddings):
                         session.add(
                             Chunk(
@@ -475,15 +515,32 @@ class SqlAlchemyDocumentStore:
                                 embedding=list(vector),
                             )
                         )
-            return response
+            return _to_response(document)
         except IntegrityError as exc:
             # A concurrent request may have inserted the same document after
-            # our duplicate check. Return the committed record if it exists.
-            existing = self.find_by_content_hash(
-                content_hash, response.filename, owner_id=resolved_owner_id
-            )
-            if existing is not None:
-                return existing
+            # our duplicate check, or deduplication matched.
+            with self._get_session_factory()() as session:
+                with session.begin():
+                    existing = session.query(Document).filter(
+                        Document.content_sha256 == content_hash,
+                        Document.filename == response.filename,
+                        Document.owner_id == resolved_owner_id,
+                    ).one_or_none()
+                    if existing is not None:
+                        if property_id is not None:
+                            existing.property_id = property_id
+                            assoc = session.query(PropertyDocument).filter(
+                                PropertyDocument.property_id == property_id,
+                                PropertyDocument.document_id == existing.id,
+                            ).one_or_none()
+                            if assoc is None:
+                                session.add(
+                                    PropertyDocument(
+                                        property_id=property_id,
+                                        document_id=existing.id,
+                                    )
+                                )
+                        return _to_response(existing)
             raise DatabaseWriteError(
                 "The document could not be stored because of a database "
                 "constraint conflict."
@@ -521,6 +578,7 @@ class SqlAlchemyDocumentStore:
                     warnings=list(document.warnings or []),
                     detail=document.detail,
                     owner_id=document.owner_id,
+                    property_id=document.property_id,
                     created_at=document.created_at,
                     updated_at=document.updated_at,
                 )
@@ -541,6 +599,7 @@ class SqlAlchemyDocumentStore:
         status: str | None = None,
         source_type: str | None = None,
         owner_id: str | None = None,
+        property_id: str | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         try:
@@ -548,6 +607,14 @@ class SqlAlchemyDocumentStore:
                 query = session.query(Document)
                 if owner_id is not None:
                     query = query.filter(Document.owner_id == owner_id)
+                if property_id is not None:
+                    assoc_subquery = session.query(PropertyDocument.document_id).filter(
+                        PropertyDocument.property_id == property_id
+                    )
+                    query = query.filter(
+                        (Document.property_id == property_id)
+                        | (Document.id.in_(assoc_subquery))
+                    )
                 if status is not None:
                     query = query.filter(Document.status == status)
                 if source_type is not None:
@@ -571,6 +638,7 @@ class SqlAlchemyDocumentStore:
                         warnings=list(doc.warnings or []),
                         detail=doc.detail,
                         owner_id=doc.owner_id,
+                        property_id=doc.property_id,
                         created_at=doc.created_at,
                         updated_at=doc.updated_at,
                     )

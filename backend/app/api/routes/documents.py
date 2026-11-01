@@ -8,6 +8,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Path,
     Query,
@@ -34,6 +35,8 @@ from app.services.document_ingestion import DocumentIngestionService
 from app.services.document_store import DocumentStore, create_document_store
 from app.services.embedding_service import EmbeddingService
 from app.services.ingestion_errors import DocumentIngestionError
+from app.services.property_errors import PropertyError
+from app.services.property_service import PropertyService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -78,6 +81,12 @@ def _validate_document_id(document_id: str) -> str:
     return cleaned
 
 
+def get_property_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> PropertyService:
+    return PropertyService(settings)
+
+
 @router.post(
     "/ingest",
     response_model=IngestResponse,
@@ -85,6 +94,7 @@ def _validate_document_id(document_id: str) -> str:
     responses={
         200: {"description": "Document processed and committed, or OCR is required."},
         400: {"description": "Empty file, invalid contents, or no readable text."},
+        404: {"description": "Specified property not found or access denied."},
         413: {"description": "Upload exceeds the configured size limit."},
         415: {"description": "Unsupported extension or MIME type."},
         422: {"description": "Extraction failed (for example, malformed/encrypted PDF)."},
@@ -97,15 +107,32 @@ def _validate_document_id(document_id: str) -> str:
 )
 async def ingest_document(
     file: UploadFile = File(..., description="PDF, TXT, or Markdown document."),
+    property_id: str | None = Form(default=None, description="Optional property identifier."),
+    property_id_query: str | None = Query(default=None, alias="property_id", description="Optional property ID via query param."),
     current_user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings_dep),
     service: DocumentIngestionService = Depends(get_ingestion_service),
+    property_service: PropertyService = Depends(get_property_service),
 ) -> IngestResponse | JSONResponse:
     GLOBAL_RATE_LIMITER.check(
         key=f"upload:{current_user.id}",
         max_requests=settings.rate_limit_upload_per_minute,
         window_seconds=60,
     )
+
+    resolved_property_id = property_id or property_id_query
+    if resolved_property_id is not None:
+        resolved_property_id = resolved_property_id.strip() or None
+        if resolved_property_id:
+            try:
+                # Ensure the property exists and belongs to the authenticated user
+                property_service.get_property(resolved_property_id, user_id=current_user.id)
+            except PropertyError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail=f"Property '{resolved_property_id}' not found or access denied.",
+                ) from exc
+
     try:
         # Read one byte past the limit so oversized uploads can be rejected
         # without buffering the whole payload.
@@ -117,7 +144,12 @@ async def ingest_document(
         # Extraction, embedding, and synchronous database I/O must not block
         # the event loop.
         result = await run_in_threadpool(
-            service.ingest, data, file.filename, file.content_type, owner_id=current_user.id
+            service.ingest,
+            data,
+            file.filename,
+            file.content_type,
+            owner_id=current_user.id,
+            property_id=resolved_property_id,
         )
     except DocumentIngestionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
@@ -152,6 +184,9 @@ async def list_documents(
     source_type: SourceType | None = Query(
         default=None, description="Optional source format filter (pdf, txt, markdown)."
     ),
+    property_id: str | None = Query(
+        default=None, description="Optional filter by associated property ID."
+    ),
     current_user: User = Depends(get_current_user),
     store: DocumentStore = Depends(get_document_store),
 ) -> DocumentListResponse:
@@ -163,6 +198,7 @@ async def list_documents(
         status=status_filter,
         source_type=source_type,
         owner_id=current_user.id,
+        property_id=property_id,
     )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
     return DocumentListResponse(

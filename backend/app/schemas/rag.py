@@ -53,6 +53,11 @@ class RAGQuestionRequest(BaseModel):
         max_length=64,
         description="Optional exact document ID filter.",
     )
+    property_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional exact property ID filter.",
+    )
     filters: RetrievalFilters = Field(
         default_factory=RetrievalFilters,
         description="Optional document/chunk metadata filters.",
@@ -87,6 +92,16 @@ class RAGQuestionRequest(BaseModel):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("document_id must not be blank")
+        return cleaned
+
+    @field_validator("property_id")
+    @classmethod
+    def property_id_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("property_id must not be blank")
         return cleaned
 
 

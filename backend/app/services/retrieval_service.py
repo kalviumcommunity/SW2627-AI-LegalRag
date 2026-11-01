@@ -81,6 +81,7 @@ class RetrievalService:
         embedding_service: EmbeddingService | None = None,
         store: RetrievalStore | None = None,
         document_store: DocumentStore | None = None,
+        property_service: Any = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.embedding_service = embedding_service or EmbeddingService(
@@ -88,6 +89,7 @@ class RetrievalService:
         )
         self.store = store or create_retrieval_store(self.settings)
         self.document_store = document_store
+        self.property_service = property_service
 
     def search(
         self,
@@ -96,6 +98,7 @@ class RetrievalService:
         top_k: int | None = None,
         mode: RetrievalMode = "semantic",
         document_id: str | None = None,
+        property_id: str | None = None,
         filters: RetrievalFilters | None = None,
         min_score: float | None = None,
         owner_id: str | None = None,
@@ -111,15 +114,42 @@ class RetrievalService:
         selected_mode = self._validate_mode(mode)
         threshold = self._validate_min_score(min_score)
 
-        # Validate client-supplied document filter against authenticated user
+        resolved_property_id = property_id or getattr(filters, "property_id", None)
+
+        # Validate property ownership if property_id supplied
+        if resolved_property_id is not None and owner_id is not None and self.property_service is not None:
+            try:
+                self.property_service.get_property(resolved_property_id, user_id=owner_id)
+            except Exception as exc:
+                raise RetrievalQueryError(
+                    f"Property '{resolved_property_id}' not found or access denied."
+                ) from exc
+
+        # Validate client-supplied document filter against authenticated user and property
         if document_id is not None and owner_id is not None and self.document_store is not None:
             doc = self.document_store.get_document(document_id, owner_id=owner_id)
             if doc is None:
                 raise RetrievalQueryError(
                     f"Document '{document_id}' not found or access denied."
                 )
+            if resolved_property_id is not None:
+                belongs = (doc.property_id == resolved_property_id)
+                if not belongs and self.property_service is not None:
+                    try:
+                        prop_docs = self.property_service.get_property_documents(
+                            resolved_property_id, user_id=owner_id
+                        )
+                        belongs = any(d.document_id == document_id for d in prop_docs.items)
+                    except Exception:
+                        belongs = False
+                if not belongs:
+                    raise RetrievalQueryError(
+                        f"Document '{document_id}' does not belong to property '{resolved_property_id}' or access denied."
+                    )
 
-        search_filters = _to_search_filters(document_id, filters, owner_id=owner_id)
+        search_filters = _to_search_filters(
+            document_id, filters, owner_id=owner_id, property_id=resolved_property_id
+        )
         filter_fields = _used_filter_fields(search_filters)
 
         try:
@@ -412,14 +442,17 @@ def _to_search_filters(
     document_id: str | None,
     filters: RetrievalFilters | None,
     owner_id: str | None = None,
+    property_id: str | None = None,
 ) -> SearchFilters:
     metadata_filters = filters or RetrievalFilters()
+    resolved_property_id = property_id or getattr(metadata_filters, "property_id", None)
     return SearchFilters(
         document_id=document_id,
         source_filename=metadata_filters.source_filename,
         source_type=metadata_filters.source_type,
         page_number=metadata_filters.page_number,
         owner_id=owner_id,
+        property_id=resolved_property_id,
     )
 
 
@@ -428,6 +461,7 @@ def _used_filter_fields(filters: SearchFilters) -> str:
         name
         for name in (
             "document_id",
+            "property_id",
             "source_filename",
             "source_type",
             "page_number",

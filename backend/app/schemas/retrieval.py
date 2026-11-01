@@ -87,6 +87,11 @@ class RetrievalSearchRequest(BaseModel):
         max_length=64,
         description="Optional exact document ID filter.",
     )
+    property_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional exact property ID filter.",
+    )
     filters: RetrievalFilters = Field(
         default_factory=RetrievalFilters,
         description="Optional document/chunk metadata filters.",

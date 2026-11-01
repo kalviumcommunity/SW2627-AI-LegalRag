@@ -24,7 +24,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.db.models import Chunk, Document
+from app.db.models import Chunk, Document, PropertyDocument
 from app.services.document_store import get_shared_engine, verify_vector_schema
 from app.services.retrieval_errors import (
     RetrievalConfigurationError,
@@ -43,6 +43,7 @@ class SearchFilters:
     source_type: str | None = None
     page_number: int | None = None
     owner_id: str | None = None
+    property_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +294,17 @@ class SqlAlchemyRetrievalStore:
         if filters.owner_id is not None:
             statement = statement.where(
                 Document.owner_id == filters.owner_id
+            )
+        if filters.property_id is not None:
+            assoc_subquery = (
+                select(PropertyDocument.document_id)
+                .where(PropertyDocument.property_id == filters.property_id)
+            )
+            statement = statement.where(
+                or_(
+                    Document.property_id == filters.property_id,
+                    Document.id.in_(assoc_subquery),
+                )
             )
         if filters.document_id is not None:
             statement = statement.where(
