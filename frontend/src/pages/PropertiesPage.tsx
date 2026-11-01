@@ -5,18 +5,22 @@ import {
   RefreshCw,
   Search,
   ChevronRight,
-  ArrowLeft,
   FileText,
+  ShieldAlert,
 } from 'lucide-react';
 import { Card } from '../components/common/Card';
 import { Modal } from '../components/common/Modal';
 import { PropertyExtractionDashboard } from '../components/property/PropertyExtractionDashboard';
+import { PropertyRiskDashboard } from '../components/property/PropertyRiskDashboard';
 import { propertiesApi } from '../api/properties';
+import { riskApi } from '../api/risk';
 import { useToast } from '../components/common/Toast';
 import { useAuth } from '../context/AuthContext';
 import type {
   PropertyItem,
   PropertyExtractionResponse,
+  PropertyRiskAssessmentResponse,
+  RiskFindingStatus,
 } from '../api/types';
 
 interface PropertiesPageProps {
@@ -31,9 +35,17 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
   const { isAuthenticated, openAuthModal } = useAuth();
   const [properties, setProperties] = useState<PropertyItem[]>([]);
   const [activeProperty, setActiveProperty] = useState<PropertyItem | null>(null);
+  const [activeTab, setActiveTab] = useState<'risk' | 'extraction'>('risk');
+
+  // Extraction State
   const [extraction, setExtraction] = useState<PropertyExtractionResponse | null>(null);
-  const [loadingList, setLoadingList] = useState<boolean>(true);
   const [loadingExtraction, setLoadingExtraction] = useState<boolean>(false);
+
+  // Risk Assessment State
+  const [riskAssessment, setRiskAssessment] = useState<PropertyRiskAssessmentResponse | null>(null);
+  const [loadingRisk, setLoadingRisk] = useState<boolean>(false);
+
+  const [loadingList, setLoadingList] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Create Property Modal
@@ -86,15 +98,31 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
     }
   }, []);
 
+  // Load risk assessment for active property
+  const fetchRiskAssessment = useCallback(async (propertyId: string) => {
+    try {
+      setLoadingRisk(true);
+      const res = await riskApi.getAssessment(propertyId);
+      setRiskAssessment(res);
+    } catch (err: unknown) {
+      console.warn('Failed to fetch risk assessment:', err);
+      setRiskAssessment(null);
+    } finally {
+      setLoadingRisk(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeProperty) {
       fetchExtraction(activeProperty.id);
+      fetchRiskAssessment(activeProperty.id);
     } else {
       setExtraction(null);
+      setRiskAssessment(null);
     }
-  }, [activeProperty, fetchExtraction]);
+  }, [activeProperty, fetchExtraction, fetchRiskAssessment]);
 
-  // Trigger extraction
+  // Extraction handlers
   const handleTriggerExtract = async () => {
     if (!activeProperty) return;
     try {
@@ -102,6 +130,8 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       const res = await propertiesApi.extract(activeProperty.id);
       setExtraction(res);
       showSuccess(`Extracted structured facts for "${activeProperty.name}".`);
+      // Refresh risk assessment too since facts changed
+      fetchRiskAssessment(activeProperty.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Extraction failed';
       showError(msg);
@@ -110,7 +140,6 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
     }
   };
 
-  // Refresh extraction
   const handleRefreshExtract = async () => {
     if (!activeProperty) return;
     try {
@@ -118,11 +147,91 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       const res = await propertiesApi.refreshExtraction(activeProperty.id);
       setExtraction(res);
       showSuccess(`Refreshed structured extraction for "${activeProperty.name}".`);
+      fetchRiskAssessment(activeProperty.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Refresh failed';
       showError(msg);
     } finally {
       setLoadingExtraction(false);
+    }
+  };
+
+  // Risk Assessment handlers
+  const handleTriggerAssess = async () => {
+    if (!activeProperty) return;
+    try {
+      setLoadingRisk(true);
+      const res = await riskApi.assess(activeProperty.id);
+      setRiskAssessment(res);
+      showSuccess(`Due diligence risk assessment completed for "${activeProperty.name}".`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Risk assessment failed';
+      showError(msg);
+    } finally {
+      setLoadingRisk(false);
+    }
+  };
+
+  const handleRefreshAssess = async () => {
+    if (!activeProperty) return;
+    try {
+      setLoadingRisk(true);
+      const res = await riskApi.refresh(activeProperty.id);
+      setRiskAssessment(res);
+      showSuccess(`Refreshed due diligence assessment for "${activeProperty.name}".`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Refresh failed';
+      showError(msg);
+    } finally {
+      setLoadingRisk(false);
+    }
+  };
+
+  const handleUpdateFindingStatus = async (
+    riskId: string,
+    status: RiskFindingStatus,
+    notes?: string
+  ) => {
+    if (!activeProperty) return;
+    try {
+      const updated = await riskApi.updateFinding(activeProperty.id, riskId, {
+        status,
+        user_notes: notes,
+      });
+
+      // Update in local state
+      setRiskAssessment((prev) => {
+        if (!prev) return prev;
+        const findings = prev.findings.map((f) => (f.risk_id === riskId ? updated : f));
+        // Recount open vs resolved
+        let openCount = 0;
+        let underReviewCount = 0;
+        let resolvedCount = 0;
+        let dismissedCount = 0;
+        for (const f of findings) {
+          if (f.status === 'open') openCount++;
+          else if (f.status === 'under_review') underReviewCount++;
+          else if (f.status === 'resolved') resolvedCount++;
+          else if (f.status === 'dismissed') dismissedCount++;
+        }
+        return {
+          ...prev,
+          findings,
+          summary: {
+            ...prev.summary,
+            open_count: openCount,
+            under_review_count: underReviewCount,
+            resolved_count: resolvedCount,
+            dismissed_count: dismissedCount,
+          },
+        };
+      });
+
+      showSuccess(`Finding updated to ${status}.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update finding status';
+      showError(msg);
+      throw err;
     }
   };
 
@@ -161,10 +270,10 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
-            Property Due Diligence
+            Property Due Diligence & Risk Intelligence
           </h1>
           <p style={{ fontSize: '0.875rem', color: '#64748B', marginTop: '0.25rem', marginBottom: 0 }}>
-            Structured property information extraction, multi-document aggregation, and legal conflict detection.
+            Evidence-backed legal risk assessment, multi-document conflict analysis, and structured extraction.
           </p>
         </div>
 
@@ -195,7 +304,7 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
         </button>
       </div>
 
-      {/* Main Split Layout: Properties List Selector & Extraction Dashboard */}
+      {/* Main Split Layout: Properties List Selector & Analysis Dashboard */}
       <div style={{ display: 'grid', gridTemplateColumns: activeProperty ? '300px 1fr' : '1fr', gap: '1.5rem', alignItems: 'start' }}>
         {/* Left Column: Properties Sidebar List */}
         <Card>
@@ -271,16 +380,115 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
           </div>
         </Card>
 
-        {/* Right Column: Structured Extraction Dashboard */}
+        {/* Right Column: Tab View for Risk Assessment & Structured Facts */}
         {activeProperty ? (
-          <PropertyExtractionDashboard
-            propertyName={activeProperty.name}
-            propertyId={activeProperty.id}
-            extractionResponse={extraction}
-            loading={loadingExtraction}
-            onTriggerExtract={handleTriggerExtract}
-            onRefreshExtract={handleRefreshExtract}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Tab Navigation */}
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                borderBottom: '2px solid #E2E8F0',
+                paddingBottom: '0.25rem',
+              }}
+            >
+              <button
+                onClick={() => setActiveTab('risk')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.25rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'risk' ? '3px solid #DC2626' : '3px solid transparent',
+                  backgroundColor: activeTab === 'risk' ? '#FEF2F2' : 'transparent',
+                  color: activeTab === 'risk' ? '#991B1B' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <ShieldAlert size={17} color={activeTab === 'risk' ? '#DC2626' : '#94A3B8'} />
+                Risk Assessment & Due Diligence
+                {riskAssessment?.summary && riskAssessment.summary.open_count > 0 && (
+                  <span
+                    style={{
+                      backgroundColor: '#DC2626',
+                      color: '#FFFFFF',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      borderRadius: '9999px',
+                      padding: '0.1rem 0.5rem',
+                    }}
+                  >
+                    {riskAssessment.summary.open_count}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('extraction')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.25rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'extraction' ? '3px solid #7C3AED' : '3px solid transparent',
+                  backgroundColor: activeTab === 'extraction' ? '#F3F0FF' : 'transparent',
+                  color: activeTab === 'extraction' ? '#6D28D9' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <FileText size={17} color={activeTab === 'extraction' ? '#7C3AED' : '#94A3B8'} />
+                Extracted Facts & Citations
+                {extraction?.data && (
+                  <span
+                    style={{
+                      backgroundColor: '#7C3AED',
+                      color: '#FFFFFF',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      borderRadius: '9999px',
+                      padding: '0.1rem 0.5rem',
+                    }}
+                  >
+                    {extraction.data.supported_count +
+                      extraction.data.unverified_count +
+                      extraction.data.conflicting_count}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Active Tab Content */}
+            {activeTab === 'risk' ? (
+              <PropertyRiskDashboard
+                propertyName={activeProperty.name}
+                propertyId={activeProperty.id}
+                assessmentResponse={riskAssessment}
+                loading={loadingRisk}
+                onTriggerAssess={handleTriggerAssess}
+                onRefreshAssess={handleRefreshAssess}
+                onUpdateFindingStatus={handleUpdateFindingStatus}
+              />
+            ) : (
+              <PropertyExtractionDashboard
+                propertyName={activeProperty.name}
+                propertyId={activeProperty.id}
+                extractionResponse={extraction}
+                loading={loadingExtraction}
+                onTriggerExtract={handleTriggerExtract}
+                onRefreshExtract={handleRefreshExtract}
+              />
+            )}
+          </div>
         ) : (
           <Card>
             <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
@@ -289,7 +497,7 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 Select a Property
               </h3>
               <p style={{ fontSize: '0.875rem', color: '#64748B' }}>
-                Choose a property from the left list or create a new property to view extracted facts, financial details, approvals, and legal verification.
+                Choose a property from the left list or create a new property to view due diligence risk assessments, extracted facts, financial details, and approvals.
               </p>
             </div>
           </Card>
@@ -382,4 +590,3 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
     </div>
   );
 };
-
