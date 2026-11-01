@@ -330,3 +330,88 @@ export interface PropertyListResponse {
   page: number;
   page_size: number;
 }
+
+
+// --- Phase 12: Property Risk Assessment & Due Diligence Types ---
+
+export type RiskCategory =
+  | 'ownership_title'
+  | 'regulatory_approval'
+  | 'financial'
+  | 'property_identity'
+  | 'legal_dispute'
+  | 'documentation_completeness';
+
+export type RiskSeverity = 'critical' | 'high' | 'medium' | 'low' | 'informational';
+
+export type RiskFindingStatus = 'open' | 'under_review' | 'resolved' | 'dismissed';
+
+export interface RiskEvidenceItem {
+  document_id?: string | null;
+  filename?: string | null;
+  page_number?: number | null;
+  supporting_text?: string | null;
+  fact_field?: string | null;
+  verification_status?: string | null;
+  original_value?: string | null;
+}
+
+export interface PropertyRiskFindingResponse {
+  risk_id: string;
+  property_id: string;
+  rule_key: string;
+  category: RiskCategory;
+  severity: RiskSeverity;
+  status: RiskFindingStatus;
+  title: string;
+  description: string;
+  reason: string;
+  recommended_action: string;
+  evidence: RiskEvidenceItem[];
+  affected_facts: string[];
+  user_notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PropertyRiskFindingUpdateRequest {
+  status: RiskFindingStatus;
+  user_notes?: string | null;
+}
+
+export interface PropertyRiskAssessmentSummary {
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  informational_count: number;
+  open_count: number;
+  under_review_count: number;
+  resolved_count: number;
+  dismissed_count: number;
+}
+
+export interface PropertyRiskAssessmentResponse {
+  assessment_id: string;
+  property_id: string;
+  status: 'completed' | 'pending' | 'failed' | 'stale';
+  summary: PropertyRiskAssessmentSummary;
+  findings: PropertyRiskFindingResponse[];
+  document_count: number;
+  is_stale: boolean;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  disclaimer?: string;
+}
+
+export interface PropertyRiskAssessmentStatusResponse {
+  property_id: string;
+  status: 'not_started' | 'pending' | 'completed' | 'failed' | 'stale';
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  is_stale: boolean;
+  last_assessed_at?: string | null;
+}

@@ -276,3 +276,155 @@ export const FactVerificationBadge: React.FC<FactVerificationBadgeProps> = ({
       );
   }
 };
+
+
+// --- Phase 12: Risk Assessment Badges ---
+
+import type { RiskSeverity, RiskFindingStatus } from '../../api/types';
+
+interface RiskSeverityBadgeProps {
+  severity: RiskSeverity;
+  size?: 'sm' | 'md';
+}
+
+export const RiskSeverityBadge: React.FC<RiskSeverityBadgeProps> = ({
+  severity,
+  size = 'md',
+}) => {
+  const iconSize = size === 'sm' ? 12 : 14;
+  const padding = size === 'sm' ? '0.2rem 0.5rem' : '0.35rem 0.75rem';
+  const fontSize = size === 'sm' ? '0.75rem' : '0.8125rem';
+
+  const configs: Record<
+    RiskSeverity,
+    { bg: string; text: string; border: string; label: string }
+  > = {
+    critical: {
+      bg: '#FEE2E2',
+      text: '#991B1B',
+      border: '#F87171',
+      label: 'CRITICAL',
+    },
+    high: {
+      bg: '#FFEDD5',
+      text: '#C2410C',
+      border: '#FB923C',
+      label: 'HIGH',
+    },
+    medium: {
+      bg: '#FEF3C7',
+      text: '#B45309',
+      border: '#FBBF24',
+      label: 'MEDIUM',
+    },
+    low: {
+      bg: '#E0F2FE',
+      text: '#0369A1',
+      border: '#7DD3FC',
+      label: 'LOW',
+    },
+    informational: {
+      bg: '#F1F5F9',
+      text: '#475569',
+      border: '#CBD5E1',
+      label: 'INFO',
+    },
+  };
+
+  const cfg = configs[severity] || configs.informational;
+
+  return (
+    <span
+      className="badge"
+      style={{
+        backgroundColor: cfg.bg,
+        color: cfg.text,
+        border: `1px solid ${cfg.border}`,
+        fontSize,
+        padding,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.35rem',
+        fontWeight: 700,
+        letterSpacing: '0.04em',
+        borderRadius: '6px',
+      }}
+    >
+      <AlertCircle size={iconSize} />
+      <span>{cfg.label}</span>
+    </span>
+  );
+};
+
+interface RiskFindingStatusBadgeProps {
+  status: RiskFindingStatus;
+  size?: 'sm' | 'md';
+}
+
+export const RiskFindingStatusBadge: React.FC<RiskFindingStatusBadgeProps> = ({
+  status,
+  size = 'md',
+}) => {
+  const iconSize = size === 'sm' ? 12 : 14;
+  const padding = size === 'sm' ? '0.2rem 0.5rem' : '0.35rem 0.75rem';
+  const fontSize = size === 'sm' ? '0.75rem' : '0.8125rem';
+
+  const configs: Record<
+    RiskFindingStatus,
+    { bg: string; text: string; border: string; label: string }
+  > = {
+    open: {
+      bg: '#FEF2F2',
+      text: '#DC2626',
+      border: '#FECACA',
+      label: 'Open',
+    },
+    under_review: {
+      bg: '#EFF6FF',
+      text: '#2563EB',
+      border: '#BFDBFE',
+      label: 'Under Review',
+    },
+    resolved: {
+      bg: '#F0FDF4',
+      text: '#16A34A',
+      border: '#BBF7D0',
+      label: 'Resolved',
+    },
+    dismissed: {
+      bg: '#F8FAFC',
+      text: '#64748B',
+      border: '#E2E8F0',
+      label: 'Dismissed',
+    },
+  };
+
+  const cfg = configs[status] || configs.open;
+
+  return (
+    <span
+      className="badge"
+      style={{
+        backgroundColor: cfg.bg,
+        color: cfg.text,
+        border: `1px solid ${cfg.border}`,
+        fontSize,
+        padding,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.35rem',
+        fontWeight: 600,
+        borderRadius: '9999px',
+      }}
+    >
+      {status === 'resolved' ? (
+        <CheckCircle2 size={iconSize} />
+      ) : status === 'under_review' ? (
+        <Clock size={iconSize} />
+      ) : (
+        <AlertCircle size={iconSize} />
+      )}
+      <span>{cfg.label}</span>
+    </span>
+  );
+};

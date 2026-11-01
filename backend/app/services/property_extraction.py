@@ -483,6 +483,36 @@ class PropertyExtractionService:
                 "confidence": 0.75,
             }
 
+        # 5. Litigation references
+        lit_m = re.search(
+            r"(?:litigation|dispute|court\s+case|pending\s+suit|lawsuit)[^\.\n;]{3,120}",
+            text,
+            re.I,
+        )
+        if lit_m:
+            result["ownership_legal"]["litigation_references"] = {
+                "value": lit_m.group(0).strip(),
+                "original_value": lit_m.group(0).strip(),
+                "page_number": 1,
+                "supporting_quote": lit_m.group(0).strip(),
+                "confidence": 0.8,
+            }
+
+        # 6. Encumbrance information
+        enc_m = re.search(
+            r"(?:mortgage|encumbrance|bank\s+charge|hypothecation|lien)[^\.\n;]{3,120}",
+            text,
+            re.I,
+        )
+        if enc_m:
+            result["ownership_legal"]["encumbrance_information"] = {
+                "value": enc_m.group(0).strip(),
+                "original_value": enc_m.group(0).strip(),
+                "page_number": 1,
+                "supporting_quote": enc_m.group(0).strip(),
+                "confidence": 0.8,
+            }
+
         return result
 
     def _attach_provenance(

@@ -111,6 +111,18 @@ class Property(Base):
     )
 
 
+    risk_assessments: Mapped[list["PropertyRiskAssessment"]] = relationship(
+        back_populates="property",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    risk_findings: Mapped[list["PropertyRiskFinding"]] = relationship(
+        back_populates="property",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
 class PropertyDocument(Base):
     __tablename__ = "property_documents"
     __table_args__ = (
@@ -168,6 +180,94 @@ class PropertyExtraction(Base):
     )
 
     property: Mapped[Property] = relationship(back_populates="extractions")
+
+
+class PropertyRiskAssessment(Base):
+    __tablename__ = "property_risk_assessments"
+    __table_args__ = (
+        Index("ix_property_risk_assessments_property_id", "property_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    property_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    document_hashes: Mapped[dict[str, str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
+    )
+    summary: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    property: Mapped[Property] = relationship(back_populates="risk_assessments")
+    findings: Mapped[list["PropertyRiskFinding"]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PropertyRiskFinding.created_at",
+    )
+
+
+class PropertyRiskFinding(Base):
+    __tablename__ = "property_risk_findings"
+    __table_args__ = (
+        Index("ix_property_risk_findings_assessment_id", "assessment_id"),
+        Index("ix_property_risk_findings_property_id", "property_id"),
+        Index("ix_property_risk_findings_rule_key", "rule_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    assessment_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("property_risk_assessments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    property_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rule_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    recommended_action: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
+    affected_facts: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
+    user_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    property: Mapped[Property] = relationship(back_populates="risk_findings")
+    assessment: Mapped[PropertyRiskAssessment] = relationship(back_populates="findings")
 
 
 class Document(Base):

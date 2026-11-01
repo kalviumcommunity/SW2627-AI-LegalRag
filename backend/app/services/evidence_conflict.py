@@ -136,7 +136,7 @@ _AREA_RE = re.compile(
 
 # Currency / consideration parsing regex
 _CURRENCY_RE = re.compile(
-    r"(?:(?:INR|Rs\.?|\$|USD)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(crores?|cr|lakhs?|lacs?|lac|million|m|k|thousand)?\b",
+    r"((?:INR|Rs\.?|\$|USD)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(crores?|cr|lakhs?|lacs?|lac|million|m|k|thousand)?\b",
     re.IGNORECASE,
 )
 
@@ -169,8 +169,9 @@ def parse_normalized_area(text: str) -> float | None:
 def parse_normalized_currency(text: str) -> float | None:
     """Parse monetary consideration and normalize denominations."""
     for match in _CURRENCY_RE.finditer(text or ""):
-        raw_val = match.group(1).replace(",", "")
-        scale = match.group(2)
+        prefix = match.group(1)
+        raw_val = match.group(2).replace(",", "")
+        scale = match.group(3)
         try:
             val = float(raw_val)
         except ValueError:
@@ -191,6 +192,9 @@ def parse_normalized_currency(text: str) -> float | None:
                 multiplier = 1_000_000.0
             elif s in ("thousand", "k"):
                 multiplier = 1_000.0
+        elif not prefix and not scale and val < 10000:
+            # Skip bare small numbers without currency symbol or scale (e.g. flat number 101)
+            continue
         elif val < 1000 and not any(cur in text.upper() for cur in ("INR", "RS", "$", "USD")):
             # Probably not a consideration figure unless currency or scale present
             continue

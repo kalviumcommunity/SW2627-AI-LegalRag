@@ -24,6 +24,12 @@ from app.schemas.property_extraction import (
     PropertyExtractionResponse,
     PropertyExtractionStatusResponse,
 )
+from app.schemas.property_risk import (
+    PropertyRiskAssessmentResponse,
+    PropertyRiskAssessmentStatusResponse,
+    PropertyRiskFindingResponse,
+    PropertyRiskFindingUpdateRequest,
+)
 from app.services.document_store import DocumentStore, create_document_store
 from app.services.property_errors import (
     PropertyAuthorizationError,
@@ -32,6 +38,7 @@ from app.services.property_errors import (
     PropertyValidationError,
 )
 from app.services.property_extraction import PropertyExtractionService
+from app.services.property_risk_assessment import PropertyRiskAssessmentService
 from app.services.property_service import PropertyService
 
 router = APIRouter(prefix="/properties", tags=["properties"])
@@ -57,6 +64,12 @@ def get_extraction_service(
     settings: Settings = Depends(get_settings_dep),
 ) -> PropertyExtractionService:
     return PropertyExtractionService(settings=settings)
+
+
+def get_risk_assessment_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> PropertyRiskAssessmentService:
+    return PropertyRiskAssessmentService(settings=settings)
 
 
 @router.post(
@@ -400,6 +413,152 @@ async def refresh_property_extraction(
     )
     try:
         return await service.extract_property_information(
+            property_id.strip(), current_user.id, force_refresh=True
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+
+# --- Phase 12: Property Risk Assessment & Due Diligence Endpoints ---
+
+@router.post(
+    "/{property_id}/risk-assessment",
+    response_model=PropertyRiskAssessmentResponse,
+    summary="Trigger evidence-backed property risk assessment",
+    responses={
+        200: {"description": "Property risk assessment completed successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Risk assessment service failure."},
+    },
+)
+async def assess_property_risks(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyRiskAssessmentService = Depends(get_risk_assessment_service),
+) -> PropertyRiskAssessmentResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_risk:{current_user.id}",
+        max_requests=30,
+        window_seconds=60,
+    )
+    try:
+        return await service.assess_property_risks(
+            property_id.strip(), current_user.id, force_refresh=False
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/risk-assessment",
+    response_model=PropertyRiskAssessmentResponse,
+    summary="Retrieve latest property risk assessment and findings",
+    responses={
+        200: {"description": "Property risk assessment details."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Database read failure."},
+    },
+)
+async def get_property_risk_assessment(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyRiskAssessmentService = Depends(get_risk_assessment_service),
+) -> PropertyRiskAssessmentResponse:
+    try:
+        return await run_in_threadpool(
+            service.get_assessment, property_id.strip(), current_user.id
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/risk-assessment/status",
+    response_model=PropertyRiskAssessmentStatusResponse,
+    summary="Retrieve lightweight assessment status and staleness",
+    responses={
+        200: {"description": "Risk assessment status summary."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Database read failure."},
+    },
+)
+async def get_property_risk_assessment_status(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyRiskAssessmentService = Depends(get_risk_assessment_service),
+) -> PropertyRiskAssessmentStatusResponse:
+    try:
+        return await run_in_threadpool(
+            service.get_assessment_status, property_id.strip(), current_user.id
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.patch(
+    "/{property_id}/risk-assessment/findings/{risk_id}",
+    response_model=PropertyRiskFindingResponse,
+    summary="Update review status or notes for an authorized finding",
+    responses={
+        200: {"description": "Finding review status updated successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property or finding not found or access denied."},
+        422: {"description": "Validation error in request payload."},
+        500: {"description": "Database write failure."},
+    },
+)
+async def update_property_risk_finding(
+    payload: PropertyRiskFindingUpdateRequest,
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    risk_id: str = Path(..., min_length=1, max_length=64, description="Finding identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyRiskAssessmentService = Depends(get_risk_assessment_service),
+) -> PropertyRiskFindingResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_risk_update:{current_user.id}",
+        max_requests=60,
+        window_seconds=60,
+    )
+    try:
+        return await run_in_threadpool(
+            service.update_finding_status,
+            property_id.strip(),
+            risk_id.strip(),
+            current_user.id,
+            payload.status,
+            payload.user_notes,
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/{property_id}/risk-assessment/refresh",
+    response_model=PropertyRiskAssessmentResponse,
+    summary="Force reassessment of property risks across latest document set",
+    responses={
+        200: {"description": "Property risks re-evaluated successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Risk assessment service failure."},
+    },
+)
+async def refresh_property_risk_assessment(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyRiskAssessmentService = Depends(get_risk_assessment_service),
+) -> PropertyRiskAssessmentResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_risk:{current_user.id}",
+        max_requests=30,
+        window_seconds=60,
+    )
+    try:
+        return await service.assess_property_risks(
             property_id.strip(), current_user.id, force_refresh=True
         )
     except PropertyError as exc:
