@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.schemas.documents import DocumentSummary
 from app.schemas.rag import ClaimVerification, CrossDocumentConflict
@@ -163,11 +163,16 @@ class ExtractedFact(BaseModel):
     page_number: int | None = None
 
 
+class PropertyDocumentInventory(BaseModel):
+    total_documents: int = 0
+    items: list[DocumentSummary] = Field(default_factory=list)
+
+
 class PropertyIntelligenceResponse(BaseModel):
     """Consolidated property intelligence report."""
 
     property: PropertyResponse
-    document_inventory: list[DocumentSummary]
+    document_inventory: PropertyDocumentInventory
     document_count: int
     processing_summary: PropertyProcessingSummary
     verified_facts: list[ExtractedFact]
@@ -175,7 +180,22 @@ class PropertyIntelligenceResponse(BaseModel):
     unverified_or_missing_information: list[str]
     citations: list[dict[str, Any]]
     legal_disclaimer: str = (
-        "Automated property intelligence is an informational tool and is NOT a substitute "
+        "Automated property intelligence is an informational tool and is not a substitute "
         "for professional legal due diligence, title search, or certified encumbrance verification. "
         "Absence of records in uploaded documents does not guarantee clear or unencumbered legal title."
     )
+
+    @field_validator("document_inventory", mode="before")
+    @classmethod
+    def normalize_document_inventory(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return PropertyDocumentInventory(total_documents=len(v), items=v)
+        if isinstance(v, dict) and "total_documents" in v:
+            return v
+        return v
+
+    @computed_field
+    @property
+    def missing_or_unverified_information(self) -> list[str]:
+        return self.unverified_or_missing_information
+

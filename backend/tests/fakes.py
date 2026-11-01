@@ -63,8 +63,9 @@ class FakeEmbeddingProvider:
 class FakeDocumentStore:
     """In-memory store used by API regression and document management tests."""
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, engine: Any = None) -> None:
         self.error = error
+        self.engine = engine
         self.records: dict[tuple[str, str], IngestResponse] = {}
         self.by_id: dict[str, IngestResponse] = {}
         self.owners: dict[str, str] = {}
@@ -117,6 +118,26 @@ class FakeDocumentStore:
         self.content_hashes[response.document_id] = content_hash
         self.created_at[response.document_id] = now
         self.saved_embeddings.append(embeddings)
+        if self.engine is not None:
+            from app.db.models import Document
+            from sqlalchemy.orm import Session
+            with Session(self.engine) as session:
+                with session.begin():
+                    db_doc = Document(
+                        id=response.document_id,
+                        owner_id=resolved_owner,
+                        property_id=property_id,
+                        filename=response.filename,
+                        source_type="txt",
+                        status="processed",
+                        content_sha256=content_hash,
+                        extracted_characters=response.extracted_characters,
+                        chunk_count=response.chunk_count,
+                        page_count=response.page_count,
+                        warnings=list(response.warnings or []),
+                        detail=response.detail,
+                    )
+                    session.merge(db_doc)
         return response
 
     def get_document(
@@ -285,7 +306,28 @@ class FakeRetrievalStore:
                 "min_score": min_score,
             }
         )
-        return self.semantic_results[:limit]
+        if self.semantic_results:
+            return self.semantic_results[:limit]
+        if hasattr(self, "canned_results") and self.canned_results:
+            matches = []
+            for r in self.canned_results:
+                if isinstance(r, SemanticMatch):
+                    matches.append(r)
+                else:
+                    matches.append(
+                        SemanticMatch(
+                            record=chunk_record(
+                                getattr(r, "chunk_id", "chk_1"),
+                                document_id=getattr(r, "document_id", "doc_1"),
+                                text=getattr(r, "text", ""),
+                                filename=getattr(getattr(r, "metadata", None), "filename", "test.txt"),
+                            ),
+                            distance=getattr(r, "distance", None) if getattr(r, "distance", None) is not None else 0.25,
+                            similarity=getattr(r, "score", 0.75),
+                        )
+                    )
+            return matches[:limit]
+        return []
 
     def search_keyword(
         self,

@@ -1,6 +1,8 @@
-"""Property management and property intelligence API routes."""
+"""Property management, property intelligence, and structured extraction API routes."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.concurrency import run_in_threadpool
@@ -18,21 +20,43 @@ from app.schemas.properties import (
     PropertyResponse,
     PropertyUpdateRequest,
 )
+from app.schemas.property_extraction import (
+    PropertyExtractionResponse,
+    PropertyExtractionStatusResponse,
+)
+from app.services.document_store import DocumentStore, create_document_store
 from app.services.property_errors import (
     PropertyAuthorizationError,
     PropertyError,
     PropertyNotFoundError,
     PropertyValidationError,
 )
+from app.services.property_extraction import PropertyExtractionService
 from app.services.property_service import PropertyService
 
 router = APIRouter(prefix="/properties", tags=["properties"])
 
 
+def get_settings_dep() -> Settings:
+    return get_settings()
+
+
+def get_document_store(
+    settings: Settings = Depends(get_settings_dep),
+) -> DocumentStore:
+    return create_document_store(settings)
+
+
 def get_property_service(
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_settings_dep),
 ) -> PropertyService:
     return PropertyService(settings)
+
+
+def get_extraction_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> PropertyExtractionService:
+    return PropertyExtractionService(settings=settings)
 
 
 @router.post(
@@ -271,6 +295,112 @@ async def get_property_intelligence(
     try:
         return await run_in_threadpool(
             service.get_property_intelligence, property_id.strip(), current_user.id
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/{property_id}/extract",
+    response_model=PropertyExtractionResponse,
+    summary="Trigger structured information extraction for an authorized property",
+    responses={
+        200: {"description": "Property information extracted successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Extraction service failure."},
+    },
+)
+async def extract_property_information(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyExtractionService = Depends(get_extraction_service),
+) -> PropertyExtractionResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_extract:{current_user.id}",
+        max_requests=30,
+        window_seconds=60,
+    )
+    try:
+        return await service.extract_property_information(
+            property_id.strip(), current_user.id, force_refresh=False
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/extraction",
+    response_model=PropertyExtractionResponse,
+    summary="Retrieve extracted property facts and cross-document verification",
+    responses={
+        200: {"description": "Extracted property facts report."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Database read failure."},
+    },
+)
+async def get_property_extraction(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyExtractionService = Depends(get_extraction_service),
+) -> PropertyExtractionResponse:
+    try:
+        return await run_in_threadpool(
+            service.get_extraction, property_id.strip(), current_user.id
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/extraction/status",
+    response_model=PropertyExtractionStatusResponse,
+    summary="Retrieve current extraction status and staleness indicator",
+    responses={
+        200: {"description": "Extraction status report."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Database read failure."},
+    },
+)
+async def get_property_extraction_status(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyExtractionService = Depends(get_extraction_service),
+) -> PropertyExtractionStatusResponse:
+    try:
+        return await run_in_threadpool(
+            service.get_extraction_status, property_id.strip(), current_user.id
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/{property_id}/extraction/refresh",
+    response_model=PropertyExtractionResponse,
+    summary="Force refresh structured extraction after associated documents change",
+    responses={
+        200: {"description": "Property information re-extracted successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Property not found or access denied."},
+        500: {"description": "Extraction service failure."},
+    },
+)
+async def refresh_property_extraction(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PropertyExtractionService = Depends(get_extraction_service),
+) -> PropertyExtractionResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_extract:{current_user.id}",
+        max_requests=30,
+        window_seconds=60,
+    )
+    try:
+        return await service.extract_property_information(
+            property_id.strip(), current_user.id, force_refresh=True
         )
     except PropertyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
