@@ -9,6 +9,7 @@ import { DocumentsPage } from './pages/DocumentsPage';
 import { DocumentDetailPage } from './pages/DocumentDetailPage';
 import { AskQuestionsPage } from './pages/AskQuestionsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { PropertiesPage } from './pages/PropertiesPage';
 
 export const AppContent: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<NavPage>('home');
@@ -16,10 +17,11 @@ export const AppContent: React.FC = () => {
   const [activeQuestion, setActiveQuestion] = useState<string>('');
   const [activeTopK, setActiveTopK] = useState<number>(5);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activePropertyId, setActivePropertyId] = useState<string>('');
 
   const handleNavigate = (
     page: string,
-    params?: { docId?: string; question?: string; topK?: number }
+    params?: { docId?: string; question?: string; topK?: number; propertyId?: string }
   ) => {
     if (params?.docId) {
       setActiveDocId(params.docId);
@@ -30,9 +32,14 @@ export const AppContent: React.FC = () => {
     if (params?.topK) {
       setActiveTopK(params.topK);
     }
+    if (params?.propertyId) {
+      setActivePropertyId(params.propertyId);
+    }
 
     if (page === 'doc-detail') {
       setCurrentPage('doc-detail');
+    } else if (page === 'properties') {
+      setCurrentPage('properties');
     } else if (page === 'documents') {
       setCurrentPage('documents');
     } else if (page === 'ask') {
@@ -67,6 +74,13 @@ export const AppContent: React.FC = () => {
             <HomePage
               onNavigate={handleNavigate}
               searchTerm={searchQuery}
+            />
+          )}
+
+          {currentPage === 'properties' && (
+            <PropertiesPage
+              onNavigate={handleNavigate}
+              selectedPropertyId={activePropertyId}
             />
           )}
 

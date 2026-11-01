@@ -1,8 +1,8 @@
 import React from 'react';
-import { Home, FileText, MessageSquareText, Settings, Sparkles } from 'lucide-react';
+import { Home, FileText, MessageSquareText, Settings, Sparkles, Building } from 'lucide-react';
 import { SidebarCharacterIllustration } from '../common/Illustrations';
 
-export type NavPage = 'home' | 'documents' | 'ask' | 'settings' | 'doc-detail';
+export type NavPage = 'home' | 'properties' | 'documents' | 'ask' | 'settings' | 'doc-detail';
 
 interface SidebarProps {
   currentPage: NavPage;
@@ -12,6 +12,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => {
   const navItems = [
     { id: 'home' as NavPage, label: 'Home', icon: Home },
+    { id: 'properties' as NavPage, label: 'Properties', icon: Building },
     { id: 'documents' as NavPage, label: 'Documents', icon: FileText },
     { id: 'ask' as NavPage, label: 'Ask Questions', icon: MessageSquareText },
     { id: 'settings' as NavPage, label: 'Settings', icon: Settings },

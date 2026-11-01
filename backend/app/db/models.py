@@ -20,6 +20,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -98,6 +99,11 @@ class Property(Base):
         back_populates="property",
         foreign_keys="Document.property_id",
     )
+    extractions: Mapped[list["PropertyExtraction"]] = relationship(
+        back_populates="property",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     associated_documents: Mapped[list["PropertyDocument"]] = relationship(
         back_populates="property",
         cascade="all, delete-orphan",
@@ -128,6 +134,40 @@ class PropertyDocument(Base):
 
     property: Mapped[Property] = relationship(back_populates="associated_documents")
     document: Mapped["Document"] = relationship(back_populates="property_associations")
+
+
+class PropertyExtraction(Base):
+    __tablename__ = "property_extractions"
+    __table_args__ = (
+        Index("ix_property_extractions_property_id", "property_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    property_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    extracted_data: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
+    )
+    document_hashes: Mapped[dict[str, str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    property: Mapped[Property] = relationship(back_populates="extractions")
 
 
 class Document(Base):

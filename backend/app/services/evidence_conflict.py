@@ -130,13 +130,13 @@ _ANTONYM_PAIRS = (
 
 # Area parsing regex
 _AREA_RE = re.compile(
-    r"\b(\d+(?:[.,]\d+)?)\s*(sq\.?\s*m(?:eters?|etres?)?|square\s*meters?|square\s*metres?|sq\.?\s*ft|square\s*feet|sft|acres?|gunthas?|guntas?)\b",
+    r"\b(\d+(?:,\d+)*(?:\.\d+)?)\s*(sq\.?\s*m(?:eters?|etres?)?|square\s*meters?|square\s*metres?|sq\.?\s*ft|square\s*feet|sft|acres?|gunthas?|guntas?)\b",
     re.IGNORECASE,
 )
 
 # Currency / consideration parsing regex
 _CURRENCY_RE = re.compile(
-    r"(?:(?:INR|Rs\.?|\$|USD)\s*)?(\d+(?:[.,]\d+)?)\s*(crores?|cr|lakhs?|lacs?|lac|million|m|k|thousand)?\b",
+    r"(?:(?:INR|Rs\.?|\$|USD)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(crores?|cr|lakhs?|lacs?|lac|million|m|k|thousand)?\b",
     re.IGNORECASE,
 )
 

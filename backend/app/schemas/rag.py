@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.schemas.documents import SourceType
 from app.schemas.retrieval import RetrievalFilters, RetrievalMode
@@ -281,3 +281,8 @@ class RAGResponse(BaseModel):
         ),
         description="Mandatory legal advice and title guarantee disclaimer.",
     )
+
+    @computed_field
+    @property
+    def status(self) -> str:
+        return "answered" if self.answer else "insufficient_evidence"

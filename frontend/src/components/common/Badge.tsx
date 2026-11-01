@@ -164,3 +164,115 @@ export const EvidenceStatusBadge: React.FC<EvidenceStatusBadgeProps> = ({ status
       );
   }
 };
+
+import type { FactVerificationStatus } from '../../api/types';
+
+interface FactVerificationBadgeProps {
+  status: FactVerificationStatus;
+  size?: 'sm' | 'md';
+}
+
+export const FactVerificationBadge: React.FC<FactVerificationBadgeProps> = ({
+  status,
+  size = 'md',
+}) => {
+  const iconSize = size === 'sm' ? 12 : 14;
+  const padding = size === 'sm' ? '0.2rem 0.5rem' : '0.35rem 0.75rem';
+  const fontSize = size === 'sm' ? '0.75rem' : '0.8125rem';
+
+  switch (status) {
+    case 'supported':
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: '#DCFCE7',
+            color: '#15803D',
+            borderColor: '#86EFAC',
+            fontSize,
+            padding,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            fontWeight: 600,
+            borderRadius: '9999px',
+            border: '1px solid #86EFAC',
+          }}
+          title="Extracted fact is supported by verified source passage in document."
+        >
+          <CheckCircle2 size={iconSize} />
+          <span>Supported</span>
+        </span>
+      );
+    case 'unverified':
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: '#FEF3C7',
+            color: '#B45309',
+            borderColor: '#FDE047',
+            fontSize,
+            padding,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            fontWeight: 600,
+            borderRadius: '9999px',
+            border: '1px solid #FDE047',
+          }}
+          title="Extracted fact is not fully corroborated by supporting text."
+        >
+          <Clock size={iconSize} />
+          <span>Unverified</span>
+        </span>
+      );
+    case 'conflicting':
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: '#FEE2E2',
+            color: '#DC2626',
+            borderColor: '#FCA5A5',
+            fontSize,
+            padding,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            fontWeight: 600,
+            borderRadius: '9999px',
+            border: '1px solid #FCA5A5',
+          }}
+          title="Discrepancy detected across multiple associated documents."
+        >
+          <AlertCircle size={iconSize} />
+          <span>Conflicting</span>
+        </span>
+      );
+    case 'missing':
+    default:
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: '#F1F5F9',
+            color: '#64748B',
+            borderColor: '#CBD5E1',
+            fontSize,
+            padding,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            fontWeight: 600,
+            borderRadius: '9999px',
+            border: '1px solid #CBD5E1',
+          }}
+          title="Fact not found in any uploaded document."
+        >
+          <HelpCircle size={iconSize} />
+          <span>Missing</span>
+        </span>
+      );
+  }
+};

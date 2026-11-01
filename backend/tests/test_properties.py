@@ -26,7 +26,7 @@ from app.api.deps import get_auth_service, get_current_user
 from app.api.routes import documents, properties, rag, retrieval
 from app.core.config import Settings, get_settings
 from app.db.base import Base
-from app.db.models import Document, Property, PropertyDocument, User
+from app.db.models import Chunk, Document, Property, PropertyDocument, User
 from app.main import create_app
 from app.services.auth_service import AuthService
 from app.services.document_ingestion import DocumentIngestionService
@@ -50,6 +50,10 @@ def property_sqlite_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    from sqlalchemy import event
+    @event.listens_for(engine, "connect")
+    def connect(dbapi_con, con_record):
+        dbapi_con.create_function("to_tsvector", 2, lambda a, b: "", deterministic=True)
     Base.metadata.create_all(
         bind=engine,
         tables=[
@@ -57,6 +61,7 @@ def property_sqlite_engine():
             Property.__table__,
             Document.__table__,
             PropertyDocument.__table__,
+            Chunk.__table__,
         ],
     )
     yield engine
@@ -86,8 +91,8 @@ def property_service(property_sqlite_engine, prop_settings):
 
 
 @pytest.fixture
-def shared_stores():
-    doc_store = FakeDocumentStore()
+def shared_stores(property_sqlite_engine):
+    doc_store = FakeDocumentStore(engine=property_sqlite_engine)
     embedding_provider = FakeEmbeddingProvider(dimensions=8)
     retrieval_store = FakeRetrievalStore()
     llm_service = FakeLLMService(
@@ -374,6 +379,7 @@ def test_property_intelligence_endpoint(client, property_service, property_sqlit
     assert res_empty.status_code == 200
     data_empty = res_empty.json()
     assert data_empty["property"]["id"] == prop_id
+    owner_id = data_empty["property"]["owner_id"]
     assert data_empty["document_inventory"]["total_documents"] == 0
     assert len(data_empty["missing_or_unverified_information"]) >= 1
     # Check legal disclaimer
@@ -398,10 +404,10 @@ def test_property_intelligence_endpoint(client, property_service, property_sqlit
     with property_sqlite_engine.begin() as conn:
         conn.exec_driver_sql(
             """
-            INSERT INTO documents (id, owner_id, filename, content_sha256, status, extracted_characters, chunk_count, property_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO documents (id, owner_id, filename, source_type, content_sha256, status, extracted_characters, chunk_count, property_id, warnings)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (doc_id, "usr_1", "sale_agreement.txt", "hash85", "processed", 130, 1, prop_id),
+            (doc_id, owner_id, "sale_agreement.txt", "txt", "hash85", "processed", 130, 1, prop_id, "[]"),
         )
         conn.exec_driver_sql(
             """
@@ -497,6 +503,8 @@ def test_unauthenticated_requests_to_property_routes_rejected(client):
             resp = client.get(path)
         elif method == "DELETE":
             resp = client.delete(path)
+        elif method == "PATCH":
+            resp = client.patch(path, json={})
         else:
             resp = client.post(path, json={})
         assert resp.status_code == 401, f"{method} {path} returned {resp.status_code}, expected 401"

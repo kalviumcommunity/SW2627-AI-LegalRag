@@ -205,3 +205,128 @@ export interface UserLoginRequest {
   email: string;
   password: string;
 }
+
+
+// --- Phase 11: Structured Property Extraction Types ---
+
+export type FactVerificationStatus = 'supported' | 'unverified' | 'conflicting' | 'missing';
+
+export interface AlternativeFieldFact {
+  extracted_value?: unknown;
+  original_value?: string | null;
+  document_id?: string | null;
+  filename?: string | null;
+  page_number?: number | null;
+  supporting_text?: string | null;
+  confidence?: number;
+}
+
+export interface ExtractedFieldFact {
+  field_name: string;
+  display_name: string;
+  extracted_value?: unknown;
+  original_value?: string | null;
+  normalized_value?: unknown;
+  unit?: string | null;
+  document_id?: string | null;
+  filename?: string | null;
+  page_number?: number | null;
+  supporting_text?: string | null;
+  verification_status: FactVerificationStatus;
+  confidence: number;
+  uncertainty_note?: string | null;
+  alternative_values: AlternativeFieldFact[];
+}
+
+export interface PropertyIdentityFacts {
+  property_name: ExtractedFieldFact;
+  property_address: ExtractedFieldFact;
+  property_type: ExtractedFieldFact;
+  unit_number: ExtractedFieldFact;
+  carpet_area: ExtractedFieldFact;
+  built_up_area: ExtractedFieldFact;
+  area_unit: ExtractedFieldFact;
+}
+
+export interface FinancialFacts {
+  sale_price: ExtractedFieldFact;
+  booking_amount: ExtractedFieldFact;
+  payment_schedule: ExtractedFieldFact;
+  maintenance_charges: ExtractedFieldFact;
+  deposits_and_additional_charges: ExtractedFieldFact;
+}
+
+export interface OwnershipLegalFacts {
+  named_owner_or_seller: ExtractedFieldFact;
+  title_deed_references: ExtractedFieldFact;
+  ownership_claims: ExtractedFieldFact;
+  encumbrance_information: ExtractedFieldFact;
+  litigation_references: ExtractedFieldFact;
+}
+
+export interface ApprovalFacts {
+  project_registration_references: ExtractedFieldFact;
+  building_plan_approvals: ExtractedFieldFact;
+  completion_certificates: ExtractedFieldFact;
+  occupancy_certificates: ExtractedFieldFact;
+  fire_and_environmental_approvals: ExtractedFieldFact;
+}
+
+export interface DatesObligationsFacts {
+  agreement_date: ExtractedFieldFact;
+  possession_date: ExtractedFieldFact;
+  payment_deadlines: ExtractedFieldFact;
+  renewal_dates: ExtractedFieldFact;
+  contractual_obligations: ExtractedFieldFact;
+}
+
+export interface PropertyExtractionData {
+  property_id: string;
+  identity: PropertyIdentityFacts;
+  financial: FinancialFacts;
+  ownership_legal: OwnershipLegalFacts;
+  approvals: ApprovalFacts;
+  dates_obligations: DatesObligationsFacts;
+  conflicts: CrossDocumentConflict[];
+  missing_fields: string[];
+  supported_count: number;
+  unverified_count: number;
+  conflicting_count: number;
+  missing_count: number;
+  document_count: number;
+}
+
+export interface PropertyExtractionResponse {
+  property_id: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'stale';
+  data: PropertyExtractionData;
+  document_count: number;
+  is_stale: boolean;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PropertyExtractionStatusResponse {
+  property_id: string;
+  status: 'not_started' | 'pending' | 'in_progress' | 'completed' | 'failed' | 'stale';
+  document_count: number;
+  is_stale: boolean;
+  last_extracted_at?: string | null;
+}
+
+export interface PropertyItem {
+  id: string;
+  name: string;
+  address?: string | null;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PropertyListResponse {
+  items: PropertyItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
