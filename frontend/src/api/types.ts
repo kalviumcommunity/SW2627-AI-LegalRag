@@ -79,6 +79,7 @@ export interface DocumentSummary {
   warnings: string[];
   detail?: string | null;
   owner_id?: string;
+  property_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -95,6 +96,7 @@ export interface DocumentDetailResponse {
   warnings: string[];
   detail?: string | null;
   owner_id?: string;
+  property_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -368,6 +370,19 @@ export interface PropertyListResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface PropertyDocumentAssociationResponse {
+  property_id: string;
+  document_id: string;
+  associated: boolean;
+  message: string;
+}
+
+export interface PropertyDocumentListResponse {
+  property_id: string;
+  items: DocumentSummary[];
+  total: number;
 }
 
 

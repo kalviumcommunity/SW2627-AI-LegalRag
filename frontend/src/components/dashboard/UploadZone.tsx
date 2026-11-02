@@ -7,10 +7,11 @@ import { useToast } from '../common/Toast';
 import type { IngestResponse } from '../../api/types';
 
 interface UploadZoneProps {
+  propertyId?: string;
   onUploadSuccess?: (doc: IngestResponse) => void;
 }
 
-export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadSuccess }) => {
+export const UploadZone: React.FC<UploadZoneProps> = ({ propertyId, onUploadSuccess }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -46,7 +47,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadSuccess }) => {
     setIsUploading(true);
 
     try {
-      const response = await documentsApi.ingest(file);
+      const response = await documentsApi.ingest(file, propertyId);
       if (response.status === 'processed') {
         showSuccess(`"${file.name}" ingested successfully with ${response.chunk_count} chunks.`);
       } else if (response.status === 'ocr_required') {

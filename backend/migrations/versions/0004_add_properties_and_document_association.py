@@ -10,8 +10,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0004_add_properties_and_document_association"
-down_revision: Union[str, None] = "0003_add_users_and_document_ownership"
+revision: str = "0004_properties_and_docs"
+down_revision: Union[str, None] = "0003_users_and_ownership"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

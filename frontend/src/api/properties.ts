@@ -2,6 +2,8 @@ import { apiClient, getApiBaseUrl, getAuthToken } from './client';
 import type {
   PropertyItem,
   PropertyListResponse,
+  PropertyDocumentAssociationResponse,
+  PropertyDocumentListResponse,
   PropertyExtractionResponse,
   PropertyExtractionStatusResponse,
   PortfolioStatsResponse,
@@ -141,5 +143,50 @@ export const propertiesApi = {
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(downloadUrl);
+  },
+  /**
+   * List documents associated with a property.
+   */
+  async getDocuments(
+    propertyId: string,
+    page: number = 1,
+    pageSize: number = 50
+  ): Promise<PropertyDocumentListResponse> {
+    return apiClient<PropertyDocumentListResponse>(
+      `/properties/${encodeURIComponent(propertyId)}/documents?page=${page}&page_size=${pageSize}`,
+      {
+        method: 'GET',
+      }
+    );
+  },
+
+  /**
+   * Associate a document with a property.
+   */
+  async associateDocument(
+    propertyId: string,
+    documentId: string
+  ): Promise<PropertyDocumentAssociationResponse> {
+    return apiClient<PropertyDocumentAssociationResponse>(
+      `/properties/${encodeURIComponent(propertyId)}/documents/${encodeURIComponent(documentId)}/associate`,
+      {
+        method: 'POST',
+      }
+    );
+  },
+
+  /**
+   * Disassociate a document from a property.
+   */
+  async disassociateDocument(
+    propertyId: string,
+    documentId: string
+  ): Promise<PropertyDocumentAssociationResponse> {
+    return apiClient<PropertyDocumentAssociationResponse>(
+      `/properties/${encodeURIComponent(propertyId)}/documents/${encodeURIComponent(documentId)}/disassociate`,
+      {
+        method: 'POST',
+      }
+    );
   },
 };

@@ -9,7 +9,11 @@ import {
   MessageSquareText,
   Trash2,
   RefreshCw,
+  Building,
+  Link2,
+  Unlink,
 } from 'lucide-react';
+import { propertiesApi } from '../api/properties';
 import { Card } from '../components/common/Card';
 import { StatusBadge, SourceTypeBadge } from '../components/common/Badge';
 import { TableSkeleton } from '../components/common/Skeleton';
@@ -20,7 +24,7 @@ import { documentsApi } from '../api/documents';
 import { useToast } from '../components/common/Toast';
 import { useAuth } from '../context/AuthContext';
 import { ApiError } from '../api/client';
-import type { DocumentSummary, IngestionStatus, SourceType } from '../api/types';
+import type { DocumentSummary, IngestionStatus, SourceType, PropertyItem } from '../api/types';
 
 interface DocumentsPageProps {
   onNavigate: (page: string, params?: { docId?: string; question?: string }) => void;
@@ -40,6 +44,13 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sourceTypeFilter, setSourceTypeFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch);
+
+  // Properties & Association State
+  const [properties, setProperties] = useState<PropertyItem[]>([]);
+  const [uploadPropertyId, setUploadPropertyId] = useState<string>('');
+  const [associatingDoc, setAssociatingDoc] = useState<DocumentSummary | null>(null);
+  const [targetPropId, setTargetPropId] = useState<string>('');
+  const [isAssociating, setIsAssociating] = useState<boolean>(false);
 
   // Modals
   const [isUploadOpen, setIsUploadOpen] = useState<boolean>(false);
@@ -88,6 +99,13 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
 
   useEffect(() => {
     fetchDocuments();
+    if (isAuthenticated) {
+      propertiesApi.list(1, 100).then((res) => {
+        setProperties(res.items || []);
+      }).catch((err) => {
+        console.warn('Failed loading properties in DocumentsPage:', err);
+      });
+    }
   }, [fetchDocuments, isAuthenticated]);
 
   const handleOpenUpload = () => {
@@ -260,6 +278,7 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
                   }}
                 >
                   <th style={{ padding: '0.85rem 1.25rem' }}>Document</th>
+                  <th style={{ padding: '0.85rem 0.75rem' }}>Property</th>
                   <th style={{ padding: '0.85rem 1rem' }}>Type</th>
                   <th style={{ padding: '0.85rem 1rem' }}>Status</th>
                   <th style={{ padding: '0.85rem 1rem' }}>Extracted Chars</th>
@@ -417,12 +436,82 @@ export const DocumentsPage: React.FC<DocumentsPageProps> = ({ onNavigate, initia
         subtitle="Ingest PDF, TXT, or Markdown documents with automatic chunking and vector storage."
         maxWidth="700px"
       >
+        {properties.length > 0 && (
+          <div style={{ marginBottom: '1.25rem' }}>
+            <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '0.35rem' }}>
+              Target Property (Optional)
+            </label>
+            <select
+              value={uploadPropertyId}
+              onChange={(e) => setUploadPropertyId(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.875rem' }}
+            >
+              <option value="">-- No Property (Global Library) --</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: '0.75rem', color: '#6B7280', margin: '0.25rem 0 0 0' }}>
+              Selecting a property automatically links this document to it for structured extraction and due diligence risk checks.
+            </p>
+          </div>
+        )}
         <UploadZone
+          propertyId={uploadPropertyId || undefined}
           onUploadSuccess={() => {
             setIsUploadOpen(false);
             fetchDocuments();
           }}
         />
+      </Modal>
+
+      {/* Associate Document Modal */}
+      <Modal
+        isOpen={!!associatingDoc}
+        onClose={() => setAssociatingDoc(null)}
+        title="Associate Document with Property"
+        subtitle={`Select which property "${associatingDoc?.filename}" belongs to.`}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div>
+            <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '0.35rem' }}>
+              Target Property
+            </label>
+            <select
+              value={targetPropId}
+              onChange={(e) => setTargetPropId(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.875rem' }}
+            >
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <button className="btn-outline" onClick={() => setAssociatingDoc(null)}>Cancel</button>
+            <button
+              className="btn-primary"
+              disabled={isAssociating || !targetPropId}
+              style={{ backgroundColor: '#7C3AED' }}
+              onClick={async () => {
+                if (!associatingDoc || !targetPropId) return;
+                try {
+                  setIsAssociating(true);
+                  await propertiesApi.associateDocument(targetPropId, associatingDoc.document_id);
+                  showSuccess(`"${associatingDoc.filename}" associated with property.`);
+                  setAssociatingDoc(null);
+                  fetchDocuments();
+                } catch (err: unknown) {
+                  showError(err instanceof Error ? err.message : 'Association failed');
+                } finally {
+                  setIsAssociating(false);
+                }
+              }}
+            >
+              {isAssociating ? 'Associating...' : 'Confirm Association'}
+            </button>
+          </div>
+        </div>
       </Modal>
 
       {/* Delete Confirmation Modal */}

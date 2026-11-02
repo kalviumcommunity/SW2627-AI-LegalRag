@@ -127,7 +127,7 @@ class FakeDocumentStore:
             self.intelligence[response.document_id] = dict(intelligence)
 
         if self.engine is not None:
-            from app.db.models import Document
+            from app.db.models import Chunk, Document
             from sqlalchemy.orm import Session
             with Session(self.engine) as session:
                 with session.begin():
@@ -146,6 +146,22 @@ class FakeDocumentStore:
                         detail=response.detail,
                     )
                     session.merge(db_doc)
+                    vectors = embeddings if (embeddings and len(embeddings) == len(response.chunks)) else [[0.0] * 8 for _ in response.chunks]
+                    for chunk, vec in zip(response.chunks, vectors):
+                        db_chunk = Chunk(
+                            id=chunk.chunk_id,
+                            document_id=response.document_id,
+                            chunk_index=chunk.chunk_index,
+                            text=chunk.text,
+                            source_filename=chunk.source_filename,
+                            source_type=chunk.source_type,
+                            page_number=chunk.page_number,
+                            start_offset=chunk.start_offset,
+                            end_offset=chunk.end_offset,
+                            chunk_metadata=dict(chunk.metadata or {}),
+                            embedding=vec,
+                        )
+                        session.merge(db_chunk)
         return response
 
     def get_document(

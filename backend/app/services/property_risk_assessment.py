@@ -25,6 +25,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import (
     Document,
     Property,
+    PropertyDocument,
     PropertyExtraction,
     PropertyRiskAssessment,
     PropertyRiskFinding,
@@ -1101,13 +1102,17 @@ class PropertyRiskAssessmentService:
                 if prop is None:
                     raise PropertyNotFoundError(f"Property '{property_id}' not found.")
 
+                assoc_subquery = session.query(PropertyDocument.document_id).filter(
+                    PropertyDocument.property_id == property_id
+                )
                 docs = (
                     session.query(Document)
                     .options(selectinload(Document.chunks))
                     .filter(
-                        (Document.property_id == property_id)
-                        | (Document.property_associations.any(property_id=property_id))
+                        Document.owner_id == user_id,
+                        (Document.property_id == property_id) | (Document.id.in_(assoc_subquery)),
                     )
+                    .order_by(Document.created_at.desc())
                     .all()
                 )
 
