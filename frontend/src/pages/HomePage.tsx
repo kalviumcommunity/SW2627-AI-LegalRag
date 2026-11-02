@@ -1,18 +1,19 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { HeroBanner } from '../components/dashboard/HeroBanner';
-import { StatsRow, DocumentStats } from '../components/dashboard/StatsRow';
+import { PortfolioDashboard } from '../components/dashboard/PortfolioDashboard';
 import { UploadZone } from '../components/dashboard/UploadZone';
 import { AskMiniCard } from '../components/dashboard/AskMiniCard';
 import { RecentDocs } from '../components/dashboard/RecentDocs';
 import { EvidenceCard } from '../components/dashboard/EvidenceCard';
 import { Modal } from '../components/common/Modal';
 import { documentsApi } from '../api/documents';
+import { propertiesApi } from '../api/properties';
 import { useToast } from '../components/common/Toast';
 import { useAuth } from '../context/AuthContext';
-import type { DocumentSummary, IngestResponse } from '../api/types';
+import type { DocumentSummary, IngestResponse, PortfolioStatsResponse } from '../api/types';
 
 interface HomePageProps {
-  onNavigate: (page: string, params?: { docId?: string; question?: string; topK?: number }) => void;
+  onNavigate: (page: string, params?: { docId?: string; question?: string; topK?: number; propertyId?: string }) => void;
   searchTerm?: string;
 }
 
@@ -20,12 +21,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
   const { isAuthenticated } = useAuth();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [stats, setStats] = useState<DocumentStats>({
-    total: 0,
-    processed: 0,
-    ocrRequired: 0,
-    failed: 0,
-  });
+  const [portfolioStats, setPortfolioStats] = useState<PortfolioStatsResponse | null>(null);
+  const [loadingPortfolio, setLoadingPortfolio] = useState<boolean>(true);
   const [deletingDoc, setDeletingDoc] = useState<DocumentSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const { showSuccess, showError } = useToast();
@@ -33,39 +30,37 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
   const fetchDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      // Fetch documents (page 1, up to 50 for accurate dashboard stats)
       const data = await documentsApi.list({ page: 1, page_size: 50 });
-      const docs = data.items || [];
-      setDocuments(docs);
-
-      // Compute stats
-      const total = data.total;
-      const processed = docs.filter((d) => d.status === 'processed').length;
-      const ocrRequired = docs.filter((d) => d.status === 'ocr_required').length;
-      const failed = docs.filter((d) => d.status === 'failed').length;
-
-      setStats({
-        total,
-        processed,
-        ocrRequired,
-        failed,
-      });
+      setDocuments(data.items || []);
     } catch (err: unknown) {
       console.warn('Backend fetch error:', err);
-      // Reset to empty state if unauthenticated or error
       setDocuments([]);
-      setStats({ total: 0, processed: 0, ocrRequired: 0, failed: 0 });
     } finally {
       setLoading(false);
     }
   }, []);
 
+  const fetchPortfolioStats = useCallback(async () => {
+    try {
+      setLoadingPortfolio(true);
+      const stats = await propertiesApi.getPortfolioStats();
+      setPortfolioStats(stats);
+    } catch (err: unknown) {
+      console.warn('Portfolio stats fetch error:', err);
+      setPortfolioStats(null);
+    } finally {
+      setLoadingPortfolio(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchDashboardData();
-  }, [fetchDashboardData, isAuthenticated]);
+    fetchPortfolioStats();
+  }, [fetchDashboardData, fetchPortfolioStats, isAuthenticated]);
 
   const handleUploadSuccess = (_newDoc: IngestResponse) => {
     fetchDashboardData();
+    fetchPortfolioStats();
   };
 
   const handleAskQuestion = (question: string, docId?: string | null, topK?: number) => {
@@ -80,6 +75,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
       showSuccess(`Document "${deletingDoc.filename}" deleted successfully.`);
       setDeletingDoc(null);
       fetchDashboardData();
+      fetchPortfolioStats();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete document.';
       showError(msg);
@@ -100,11 +96,12 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, searchTerm = '' 
       {/* Hero Welcome Banner */}
       <HeroBanner />
 
-      {/* Stats Row */}
-      <StatsRow
-        stats={stats}
-        loading={loading}
-        onFilterClick={(_filter) => onNavigate('documents')}
+      {/* Portfolio Intelligence Dashboard */}
+      <PortfolioDashboard
+        stats={portfolioStats}
+        loading={loadingPortfolio}
+        onRefresh={fetchPortfolioStats}
+        onNavigate={onNavigate}
       />
 
       {/* Mid Row: Upload Zone (left 60%) + Ask a Question (right 40%) */}

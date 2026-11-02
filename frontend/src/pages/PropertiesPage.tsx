@@ -7,11 +7,18 @@ import {
   ChevronRight,
   FileText,
   ShieldAlert,
+  Download,
+  CheckSquare,
+  FileSearch,
+  History,
 } from 'lucide-react';
 import { Card } from '../components/common/Card';
 import { Modal } from '../components/common/Modal';
 import { PropertyExtractionDashboard } from '../components/property/PropertyExtractionDashboard';
 import { PropertyRiskDashboard } from '../components/property/PropertyRiskDashboard';
+import { DueDiligenceChecklist } from '../components/property/DueDiligenceChecklist';
+import { EvidenceExplorer } from '../components/property/EvidenceExplorer';
+import { ActivityTimeline } from '../components/property/ActivityTimeline';
 import { propertiesApi } from '../api/properties';
 import { riskApi } from '../api/risk';
 import { useToast } from '../components/common/Toast';
@@ -28,6 +35,8 @@ interface PropertiesPageProps {
   selectedPropertyId?: string;
 }
 
+type TabType = 'risk' | 'extraction' | 'checklist' | 'evidence' | 'activity';
+
 export const PropertiesPage: React.FC<PropertiesPageProps> = ({
   onNavigate: _onNavigate,
   selectedPropertyId,
@@ -35,7 +44,7 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
   const { isAuthenticated, openAuthModal } = useAuth();
   const [properties, setProperties] = useState<PropertyItem[]>([]);
   const [activeProperty, setActiveProperty] = useState<PropertyItem | null>(null);
-  const [activeTab, setActiveTab] = useState<'risk' | 'extraction'>('risk');
+  const [activeTab, setActiveTab] = useState<TabType>('risk');
 
   // Extraction State
   const [extraction, setExtraction] = useState<PropertyExtractionResponse | null>(null);
@@ -44,6 +53,9 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
   // Risk Assessment State
   const [riskAssessment, setRiskAssessment] = useState<PropertyRiskAssessmentResponse | null>(null);
   const [loadingRisk, setLoadingRisk] = useState<boolean>(false);
+
+  // PDF Export State
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
 
   const [loadingList, setLoadingList] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -130,7 +142,6 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       const res = await propertiesApi.extract(activeProperty.id);
       setExtraction(res);
       showSuccess(`Extracted structured facts for "${activeProperty.name}".`);
-      // Refresh risk assessment too since facts changed
       fetchRiskAssessment(activeProperty.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Extraction failed';
@@ -203,7 +214,6 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       setRiskAssessment((prev) => {
         if (!prev) return prev;
         const findings = prev.findings.map((f) => (f.risk_id === riskId ? updated : f));
-        // Recount open vs resolved
         let openCount = 0;
         let underReviewCount = 0;
         let resolvedCount = 0;
@@ -232,6 +242,21 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
       const msg = err instanceof Error ? err.message : 'Failed to update finding status';
       showError(msg);
       throw err;
+    }
+  };
+
+  // PDF Export Handler
+  const handleExportPdf = async () => {
+    if (!activeProperty) return;
+    try {
+      setIsExportingPdf(true);
+      await propertiesApi.downloadReportPdf(activeProperty.id, activeProperty.name);
+      showSuccess(`Due diligence report for "${activeProperty.name}" downloaded.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to download report.';
+      showError(msg);
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
@@ -380,9 +405,72 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
           </div>
         </Card>
 
-        {/* Right Column: Tab View for Risk Assessment & Structured Facts */}
+        {/* Right Column: Tab View for Property Intelligence */}
         {activeProperty ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Property Executive Banner & PDF Export */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '1rem 1.25rem',
+                backgroundColor: '#FFFFFF',
+                borderRadius: '8px',
+                border: '1px solid #E2E8F0',
+                gap: '1rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Building size={20} color="#7C3AED" />
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                    {activeProperty.name}
+                  </h2>
+                  <span
+                    style={{
+                      fontSize: '0.6875rem',
+                      fontWeight: 600,
+                      backgroundColor: '#F1F5F9',
+                      color: '#475569',
+                      padding: '0.15rem 0.5rem',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    {activeProperty.property_type || 'Residential'}
+                  </span>
+                </div>
+                {activeProperty.address && (
+                  <p style={{ fontSize: '0.8125rem', color: '#64748B', margin: '0.25rem 0 0 0' }}>
+                    {activeProperty.address}
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={handleExportPdf}
+                disabled={isExportingPdf}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.6rem 1rem',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  borderRadius: '6px',
+                  backgroundColor: '#0F172A',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  cursor: isExportingPdf ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.15s ease',
+                }}
+              >
+                <Download size={15} className={isExportingPdf ? 'animate-spin' : ''} />
+                {isExportingPdf ? 'Generating PDF...' : 'Export Due Diligence PDF'}
+              </button>
+            </div>
+
             {/* Tab Navigation */}
             <div
               style={{
@@ -390,15 +478,17 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 gap: '0.5rem',
                 borderBottom: '2px solid #E2E8F0',
                 paddingBottom: '0.25rem',
+                flexWrap: 'wrap',
               }}
             >
+              {/* Tab 1: Risk Assessment */}
               <button
                 onClick={() => setActiveTab('risk')}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.5rem',
-                  padding: '0.65rem 1.25rem',
+                  padding: '0.65rem 1.1rem',
                   fontSize: '0.875rem',
                   fontWeight: 600,
                   borderRadius: '6px 6px 0 0',
@@ -410,8 +500,8 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                   transition: 'all 0.15s ease',
                 }}
               >
-                <ShieldAlert size={17} color={activeTab === 'risk' ? '#DC2626' : '#94A3B8'} />
-                Risk Assessment & Due Diligence
+                <ShieldAlert size={16} color={activeTab === 'risk' ? '#DC2626' : '#94A3B8'} />
+                Risk Assessment
                 {riskAssessment?.summary && riskAssessment.summary.open_count > 0 && (
                   <span
                     style={{
@@ -428,13 +518,14 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 )}
               </button>
 
+              {/* Tab 2: Extracted Facts */}
               <button
                 onClick={() => setActiveTab('extraction')}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.5rem',
-                  padding: '0.65rem 1.25rem',
+                  padding: '0.65rem 1.1rem',
                   fontSize: '0.875rem',
                   fontWeight: 600,
                   borderRadius: '6px 6px 0 0',
@@ -446,8 +537,8 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                   transition: 'all 0.15s ease',
                 }}
               >
-                <FileText size={17} color={activeTab === 'extraction' ? '#7C3AED' : '#94A3B8'} />
-                Extracted Facts & Citations
+                <FileText size={16} color={activeTab === 'extraction' ? '#7C3AED' : '#94A3B8'} />
+                Extracted Facts
                 {extraction?.data && (
                   <span
                     style={{
@@ -465,10 +556,79 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                   </span>
                 )}
               </button>
+
+              {/* Tab 3: Due Diligence Checklist */}
+              <button
+                onClick={() => setActiveTab('checklist')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.1rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'checklist' ? '3px solid #059669' : '3px solid transparent',
+                  backgroundColor: activeTab === 'checklist' ? '#ECFDF5' : 'transparent',
+                  color: activeTab === 'checklist' ? '#065F46' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <CheckSquare size={16} color={activeTab === 'checklist' ? '#059669' : '#94A3B8'} />
+                Due Diligence Checklist
+              </button>
+
+              {/* Tab 4: Evidence Explorer */}
+              <button
+                onClick={() => setActiveTab('evidence')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.1rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'evidence' ? '3px solid #2563EB' : '3px solid transparent',
+                  backgroundColor: activeTab === 'evidence' ? '#EFF6FF' : 'transparent',
+                  color: activeTab === 'evidence' ? '#1E40AF' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <FileSearch size={16} color={activeTab === 'evidence' ? '#2563EB' : '#94A3B8'} />
+                Evidence Explorer
+              </button>
+
+              {/* Tab 5: Activity History */}
+              <button
+                onClick={() => setActiveTab('activity')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.1rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'activity' ? '3px solid #475569' : '3px solid transparent',
+                  backgroundColor: activeTab === 'activity' ? '#F8FAFC' : 'transparent',
+                  color: activeTab === 'activity' ? '#0F172A' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <History size={16} color={activeTab === 'activity' ? '#475569' : '#94A3B8'} />
+                Activity History
+              </button>
             </div>
 
             {/* Active Tab Content */}
-            {activeTab === 'risk' ? (
+            {activeTab === 'risk' && (
               <PropertyRiskDashboard
                 propertyName={activeProperty.name}
                 propertyId={activeProperty.id}
@@ -478,7 +638,9 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 onRefreshAssess={handleRefreshAssess}
                 onUpdateFindingStatus={handleUpdateFindingStatus}
               />
-            ) : (
+            )}
+
+            {activeTab === 'extraction' && (
               <PropertyExtractionDashboard
                 propertyName={activeProperty.name}
                 propertyId={activeProperty.id}
@@ -486,6 +648,30 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 loading={loadingExtraction}
                 onTriggerExtract={handleTriggerExtract}
                 onRefreshExtract={handleRefreshExtract}
+              />
+            )}
+
+            {activeTab === 'checklist' && (
+              <DueDiligenceChecklist
+                propertyName={activeProperty.name}
+                propertyId={activeProperty.id}
+                extraction={extraction}
+                riskAssessment={riskAssessment}
+                onNavigateToTab={(tab) => setActiveTab(tab)}
+              />
+            )}
+
+            {activeTab === 'evidence' && (
+              <EvidenceExplorer
+                extraction={extraction}
+                loading={loadingExtraction}
+              />
+            )}
+
+            {activeTab === 'activity' && (
+              <ActivityTimeline
+                propertyId={activeProperty.id}
+                propertyName={activeProperty.name}
               />
             )}
           </div>
