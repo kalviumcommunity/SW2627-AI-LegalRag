@@ -337,3 +337,234 @@ async def delete_document(
         message="Document and associated chunks deleted successfully.",
     )
 
+
+
+# --- Phase 13: Advanced Document Intelligence Endpoints ---
+
+from app.schemas.document_intelligence import (
+    DocumentClassificationResponse,
+    DocumentClassificationUpdateRequest,
+    DocumentProcessingStatusResponse,
+    ExtractedTable,
+    ExtractedTablesResponse,
+    DocumentDuplicatesResponse,
+    DuplicateMatch,
+)
+from app.services.duplicate_detection import DuplicateDetectionService
+
+
+@router.post(
+    "/{document_id}/process",
+    response_model=DocumentProcessingStatusResponse,
+    summary="Trigger or retry advanced document intelligence processing",
+)
+async def process_document_intelligence(
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    ingestion_service: DocumentIngestionService = Depends(get_ingestion_service),
+) -> DocumentProcessingStatusResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_process", max_requests=20, window_seconds=60)
+    try:
+        return await run_in_threadpool(
+            ingestion_service.reprocess,
+            cleaned_id,
+            owner_id=current_user.id,
+        )
+    except DocumentIngestionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process document: {exc}",
+        )
+
+
+@router.get(
+    "/{document_id}/processing-status",
+    response_model=DocumentProcessingStatusResponse,
+    summary="Retrieve OCR, classification, and processing status",
+)
+async def get_processing_status(
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    store: DocumentStore = Depends(get_document_store),
+) -> DocumentProcessingStatusResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_status", max_requests=60, window_seconds=60)
+
+    intel = await run_in_threadpool(store.get_document_intelligence, cleaned_id, owner_id=current_user.id)
+    if intel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    return DocumentProcessingStatusResponse(
+        document_id=cleaned_id,
+        filename=intel.get("filename", ""),
+        status=intel.get("status", "processed"),
+        ocr_status=intel.get("ocr_status"),
+        page_count=intel.get("page_count"),
+        extracted_characters=intel.get("extracted_characters", 0),
+        chunk_count=intel.get("chunk_count", 0),
+        classification_category=intel.get("classification_category"),
+        classification_confidence=intel.get("classification_confidence"),
+        classification_reasoning=intel.get("classification_reasoning"),
+        classification_manually_corrected=intel.get("classification_manually_corrected", False),
+        has_duplicates=bool(intel.get("near_duplicates")),
+        table_count=len(intel.get("extracted_tables") or []),
+        warnings=intel.get("warnings") or [],
+        detail=intel.get("detail"),
+        created_at=intel.get("created_at"),
+        updated_at=intel.get("updated_at"),
+    )
+
+
+@router.get(
+    "/{document_id}/classification",
+    response_model=DocumentClassificationResponse,
+    summary="Retrieve document classification details",
+)
+async def get_document_classification(
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    store: DocumentStore = Depends(get_document_store),
+) -> DocumentClassificationResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_class", max_requests=60, window_seconds=60)
+
+    intel = await run_in_threadpool(store.get_document_intelligence, cleaned_id, owner_id=current_user.id)
+    if intel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    return DocumentClassificationResponse(
+        document_id=cleaned_id,
+        category=intel.get("classification_category") or "Other / Unknown",
+        confidence=intel.get("classification_confidence") or 0.0,
+        reasoning=intel.get("classification_reasoning") or "No classification reasoning recorded.",
+        manually_corrected=intel.get("classification_manually_corrected", False),
+        updated_at=intel.get("updated_at"),
+    )
+
+
+@router.patch(
+    "/{document_id}/classification",
+    response_model=DocumentClassificationResponse,
+    summary="Manually correct a document classification category",
+)
+async def update_document_classification(
+    payload: DocumentClassificationUpdateRequest,
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    store: DocumentStore = Depends(get_document_store),
+) -> DocumentClassificationResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_class_update", max_requests=30, window_seconds=60)
+
+    updated = await run_in_threadpool(
+        store.update_classification,
+        cleaned_id,
+        owner_id=current_user.id,
+        category=payload.category.value,
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    from datetime import datetime, timezone
+    intel = await run_in_threadpool(store.get_document_intelligence, cleaned_id, owner_id=current_user.id)
+    updated_at_val = (intel and intel.get("updated_at")) or getattr(updated, "updated_at", None) or datetime.now(timezone.utc)
+    return DocumentClassificationResponse(
+        document_id=cleaned_id,
+        category=payload.category.value,
+        confidence=1.0,
+        reasoning="Category manually updated by user.",
+        manually_corrected=True,
+        updated_at=updated_at_val,
+    )
+
+
+@router.get(
+    "/{document_id}/tables",
+    response_model=ExtractedTablesResponse,
+    summary="Retrieve extracted tables and their provenance",
+)
+async def get_document_tables(
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    store: DocumentStore = Depends(get_document_store),
+) -> ExtractedTablesResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_tables", max_requests=60, window_seconds=60)
+
+    intel = await run_in_threadpool(store.get_document_intelligence, cleaned_id, owner_id=current_user.id)
+    if intel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    raw_tables = intel.get("extracted_tables") or []
+    tables = [ExtractedTable(**t) if isinstance(t, dict) else t for t in raw_tables]
+    return ExtractedTablesResponse(
+        document_id=cleaned_id,
+        table_count=len(tables),
+        tables=tables,
+    )
+
+
+@router.get(
+    "/{document_id}/duplicates",
+    response_model=DocumentDuplicatesResponse,
+    summary="Retrieve exact or potential duplicate matches",
+)
+async def get_document_duplicates(
+    document_id: str = Path(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    store: DocumentStore = Depends(get_document_store),
+) -> DocumentDuplicatesResponse:
+    cleaned_id = _validate_document_id(document_id)
+    GLOBAL_RATE_LIMITER.check(f"user:{current_user.id}:doc_dups", max_requests=60, window_seconds=60)
+
+    intel = await run_in_threadpool(store.get_document_intelligence, cleaned_id, owner_id=current_user.id)
+    if intel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    # Perform fresh duplicate query scoped to current_user
+    session_factory = getattr(store, "_get_session_factory", None)
+    if session_factory:
+        detector = DuplicateDetectionService()
+        with session_factory()() as sess:
+            # Get text from chunks
+            chunk_res = store.get_document_chunks(cleaned_id, limit=500, include_text=True, owner_id=current_user.id)
+            doc_text = ""
+            if chunk_res:
+                items, _ = chunk_res
+                doc_text = " ".join(c.text for c in items if c.text)
+
+            dup_result = detector.detect_duplicates(
+                session=sess,
+                document_id=cleaned_id,
+                owner_id=current_user.id,
+                content_sha256=intel.get("content_sha256", ""),
+                document_text=doc_text,
+            )
+            return dup_result
+
+    # Fallback to stored near duplicates
+    near_matches = [DuplicateMatch(**m) for m in intel.get("near_duplicates") or []]
+    return DocumentDuplicatesResponse(
+        document_id=cleaned_id,
+        has_duplicates=bool(near_matches),
+        exact_matches=[],
+        near_matches=near_matches,
+    )

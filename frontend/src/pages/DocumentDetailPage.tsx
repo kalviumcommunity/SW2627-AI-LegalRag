@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../components/common/Card';
 import { StatusBadge, SourceTypeBadge } from '../components/common/Badge';
+import { DocumentIntelligencePanel } from '../components/document/DocumentIntelligencePanel';
 import { Skeleton, TableSkeleton } from '../components/common/Skeleton';
 import { Modal } from '../components/common/Modal';
 import { documentsApi } from '../api/documents';
@@ -340,6 +341,9 @@ export const DocumentDetailPage: React.FC<DocumentDetailPageProps> = ({
           </button>
         </div>
       </Card>
+
+      {/* Phase 13 Advanced Document Intelligence Section */}
+      <DocumentIntelligencePanel documentId={documentId} onRefresh={fetchDocument} />
 
       {/* Chunks Inspection Section */}
       <Card padding="lg">

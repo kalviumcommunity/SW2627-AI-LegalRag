@@ -249,6 +249,7 @@ class DocumentStore(Protocol):
         embeddings: list[list[float]],
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> IngestResponse: ...
 
     def get_document(
@@ -264,6 +265,7 @@ class DocumentStore(Protocol):
         source_type: str | None = None,
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> tuple[list[DocumentSummary], int]: ...
 
     def get_document_chunks(
@@ -279,10 +281,50 @@ class DocumentStore(Protocol):
     def delete_document(
         self, document_id: str, owner_id: str | None = None
     ) -> bool: ...
+    def update_classification(
+        self, document_id: str, owner_id: str, category: str
+    ) -> DocumentDetailResponse | None: ...
+
+    def get_document_intelligence(
+        self, document_id: str, owner_id: str
+    ) -> dict[str, Any] | None: ...
+
+    def reprocess_document_chunks(
+        self,
+        document_id: str,
+        owner_id: str,
+        response: IngestResponse,
+        embeddings: list[list[float]],
+        intelligence: dict[str, Any] | None = None,
+    ) -> IngestResponse | None: ...
+
 
 
 class UnavailableDocumentStore:
     """Store used when no DATABASE_URL is configured."""
+    def update_classification(
+        self, document_id: str, owner_id: str, category: str
+    ) -> DocumentDetailResponse | None:
+        self.ensure_ready()
+        return None
+
+    def get_document_intelligence(
+        self, document_id: str, owner_id: str
+    ) -> dict[str, Any] | None:
+        self.ensure_ready()
+        return None
+
+    def reprocess_document_chunks(
+        self,
+        document_id: str,
+        owner_id: str,
+        response: IngestResponse,
+        embeddings: list[list[float]],
+        intelligence: dict[str, Any] | None = None,
+    ) -> IngestResponse | None:
+        self.ensure_ready()
+        return None
+
 
     def ensure_ready(self) -> None:
         raise DatabaseConfigurationError(
@@ -303,6 +345,7 @@ class UnavailableDocumentStore:
         embeddings: list[list[float]],
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         return response
@@ -322,6 +365,7 @@ class UnavailableDocumentStore:
         source_type: str | None = None,
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         return [], 0
@@ -429,6 +473,7 @@ class SqlAlchemyDocumentStore:
         embeddings: list[list[float]],
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         resolved_owner_id = owner_id or "usr_legacy_admin"
@@ -473,6 +518,7 @@ class SqlAlchemyDocumentStore:
         try:
             with self._get_session_factory()() as session:
                 with session.begin():
+                    intel = intelligence or {}
                     document = Document(
                         id=response.document_id,
                         owner_id=resolved_owner_id,
@@ -490,6 +536,15 @@ class SqlAlchemyDocumentStore:
                         page_count=response.page_count,
                         warnings=list(response.warnings),
                         detail=response.detail,
+                        classification_category=intel.get("classification_category"),
+                        classification_confidence=intel.get("classification_confidence"),
+                        classification_reasoning=intel.get("classification_reasoning"),
+                        classification_manually_corrected=intel.get("classification_manually_corrected", False),
+                        ocr_status=intel.get("ocr_status"),
+                        ocr_page_count=intel.get("ocr_page_count"),
+                        ocr_metadata=intel.get("ocr_metadata"),
+                        extracted_tables=intel.get("extracted_tables", []),
+                        near_duplicates=intel.get("near_duplicates", []),
                     )
                     session.add(document)
                     if property_id is not None:
@@ -600,6 +655,7 @@ class SqlAlchemyDocumentStore:
         source_type: str | None = None,
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> tuple[list[DocumentSummary], int]:
         self.ensure_ready()
         try:
@@ -738,6 +794,8 @@ def _source_type_for(response: IngestResponse) -> str:
         return "pdf"
     if response.filename.lower().endswith(".md"):
         return "markdown"
+    if response.filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        return "image"
     return "txt"
 
 

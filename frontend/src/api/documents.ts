@@ -1,9 +1,14 @@
 import { apiClient } from './client';
 import type {
   DocumentChunkListResponse,
+  DocumentClassificationCategory,
+  DocumentClassificationResponse,
   DocumentDeleteResponse,
   DocumentDetailResponse,
+  DocumentDuplicatesResponse,
   DocumentListResponse,
+  DocumentProcessingStatusResponse,
+  ExtractedTablesResponse,
   IngestResponse,
   IngestionStatus,
   SourceType,
@@ -86,5 +91,71 @@ export const documentsApi = {
     return apiClient<DocumentDeleteResponse>(`/documents/${encodeURIComponent(documentId)}`, {
       method: 'DELETE',
     });
+  },
+
+  /**
+   * Re-process a document through the advanced ingestion pipeline (OCR, classification, tables).
+   */
+  async reprocess(documentId: string): Promise<IngestResponse> {
+    return apiClient<IngestResponse>(`/documents/${encodeURIComponent(documentId)}/process`, {
+      method: 'POST',
+      timeoutMs: 60000,
+    });
+  },
+
+  /**
+   * Retrieve document processing, OCR, and extraction status.
+   */
+  async getProcessingStatus(documentId: string): Promise<DocumentProcessingStatusResponse> {
+    return apiClient<DocumentProcessingStatusResponse>(
+      `/documents/${encodeURIComponent(documentId)}/processing-status`,
+      { method: 'GET' }
+    );
+  },
+
+  /**
+   * Retrieve document classification and deterministic reasoning.
+   */
+  async getClassification(documentId: string): Promise<DocumentClassificationResponse> {
+    return apiClient<DocumentClassificationResponse>(
+      `/documents/${encodeURIComponent(documentId)}/classification`,
+      { method: 'GET' }
+    );
+  },
+
+  /**
+   * Manually correct a document classification category.
+   */
+  async updateClassification(
+    documentId: string,
+    category: DocumentClassificationCategory
+  ): Promise<DocumentClassificationResponse> {
+    return apiClient<DocumentClassificationResponse>(
+      `/documents/${encodeURIComponent(documentId)}/classification`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ category }),
+      }
+    );
+  },
+
+  /**
+   * Retrieve extracted structured tables with row/header provenance.
+   */
+  async getTables(documentId: string): Promise<ExtractedTablesResponse> {
+    return apiClient<ExtractedTablesResponse>(
+      `/documents/${encodeURIComponent(documentId)}/tables`,
+      { method: 'GET' }
+    );
+  },
+
+  /**
+   * Retrieve exact or near-duplicate matches for a document.
+   */
+  async getDuplicates(documentId: string): Promise<DocumentDuplicatesResponse> {
+    return apiClient<DocumentDuplicatesResponse>(
+      `/documents/${encodeURIComponent(documentId)}/duplicates`,
+      { method: 'GET' }
+    );
   },
 };

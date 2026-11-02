@@ -74,6 +74,7 @@ class FakeDocumentStore:
         self.created_at: dict[str, datetime] = {}
         self.saved_embeddings: list[list[list[float]]] = []
         self.save_calls = 0
+        self.intelligence: dict[str, dict[str, Any]] = {}
 
     def ensure_ready(self) -> None:
         if self.error is not None:
@@ -97,6 +98,7 @@ class FakeDocumentStore:
         embeddings: list[list[float]],
         owner_id: str | None = None,
         property_id: str | None = None,
+        intelligence: dict[str, Any] | None = None,
     ) -> IngestResponse:
         self.ensure_ready()
         self.save_calls += 1
@@ -118,6 +120,12 @@ class FakeDocumentStore:
         self.content_hashes[response.document_id] = content_hash
         self.created_at[response.document_id] = now
         self.saved_embeddings.append(embeddings)
+        if intelligence:
+            self.intelligence[response.document_id] = dict(intelligence)
+        if intelligence:
+
+            self.intelligence[response.document_id] = dict(intelligence)
+
         if self.engine is not None:
             from app.db.models import Document
             from sqlalchemy.orm import Session
@@ -230,6 +238,32 @@ class FakeDocumentStore:
         self.ensure_ready()
         stored = self.by_id.get(document_id)
         if stored is None:
+            if self.engine is not None:
+                from sqlalchemy.orm import Session
+                from app.db.models import Chunk, Document
+                with Session(self.engine) as session:
+                    db_doc = session.get(Document, document_id)
+                    if db_doc is None or (owner_id is not None and db_doc.owner_id != owner_id):
+                        return None
+                    db_chunks = session.query(Chunk).filter(Chunk.document_id == document_id).order_by(Chunk.chunk_index).all()
+                    total = len(db_chunks)
+                    paged = db_chunks[offset : offset + limit]
+                    items = [
+                        DocumentChunkSummary(
+                            chunk_id=c.id,
+                            document_id=c.document_id,
+                            chunk_index=c.chunk_index,
+                            source_filename=c.source_filename,
+                            source_type=c.source_type,
+                            page_number=c.page_number,
+                            start_offset=c.start_offset,
+                            end_offset=c.end_offset,
+                            metadata=dict(c.chunk_metadata or {}),
+                            text=c.text if include_text else None,
+                        )
+                        for c in paged
+                    ]
+                    return items, total
             return None
         if owner_id is not None and self.owners.get(document_id) != owner_id:
             return None
@@ -267,6 +301,128 @@ class FakeDocumentStore:
             self.records.pop((content_hash, stored.filename), None)
         self.created_at.pop(document_id, None)
         return True
+
+    def _get_session_factory(self):
+        if self.engine is not None:
+            from sqlalchemy.orm import sessionmaker
+            return sessionmaker(bind=self.engine)
+        return None
+
+    def update_classification(
+        self, document_id: str, owner_id: str, category: str
+    ) -> DocumentDetailResponse | None:
+        self.ensure_ready()
+        if self.engine is not None:
+            from sqlalchemy.orm import Session
+            from app.db.models import Document
+            with Session(self.engine) as session:
+                with session.begin():
+                    db_doc = session.get(Document, document_id)
+                    if db_doc is None or (owner_id is not None and db_doc.owner_id != owner_id):
+                        return None
+                    db_doc.classification_category = category
+                    db_doc.classification_manually_corrected = True
+                    return DocumentDetailResponse(
+                        document_id=db_doc.id,
+                        filename=db_doc.filename,
+                        source_type=db_doc.source_type,
+                        status=db_doc.status,
+                        content_sha256=db_doc.content_sha256,
+                        extracted_characters=db_doc.extracted_characters,
+                        chunk_count=db_doc.chunk_count,
+                        page_count=db_doc.page_count,
+                        warnings=db_doc.warnings or [],
+                        detail=db_doc.detail,
+                    )
+        if owner_id is not None and self.owners.get(document_id) != owner_id:
+            return None
+        doc = self.get_document(document_id, owner_id)
+        if doc is None:
+            return None
+        if document_id not in self.intelligence:
+            self.intelligence[document_id] = {}
+        self.intelligence[document_id]["classification_category"] = category
+        self.intelligence[document_id]["classification_manually_corrected"] = True
+        return doc
+
+    def get_document_intelligence(
+        self, document_id: str, owner_id: str
+    ) -> dict[str, Any] | None:
+        self.ensure_ready()
+        if owner_id is not None and self.owners.get(document_id) not in (None, owner_id):
+            return None
+        doc = self.by_id.get(document_id)
+        if doc is None and self.engine is not None:
+            from sqlalchemy.orm import Session
+            from app.db.models import Document
+            with Session(self.engine) as session:
+                db_doc = session.get(Document, document_id)
+                if db_doc is None:
+                    return None
+                if owner_id is not None and db_doc.owner_id != owner_id:
+                    return None
+                return {
+                    "document_id": db_doc.id,
+                    "filename": db_doc.filename,
+                    "status": db_doc.status,
+                    "ocr_status": db_doc.ocr_status,
+                    "ocr_page_count": db_doc.ocr_page_count,
+                    "ocr_metadata": db_doc.ocr_metadata,
+                    "classification_category": db_doc.classification_category,
+                    "classification_confidence": db_doc.classification_confidence,
+                    "classification_reasoning": db_doc.classification_reasoning,
+                    "classification_manually_corrected": db_doc.classification_manually_corrected,
+                    "extracted_tables": db_doc.extracted_tables or [],
+                    "near_duplicates": db_doc.near_duplicates or [],
+                    "content_sha256": db_doc.content_sha256,
+                    "page_count": db_doc.page_count,
+                    "extracted_characters": db_doc.extracted_characters,
+                    "chunk_count": db_doc.chunk_count,
+                    "warnings": db_doc.warnings or [],
+                    "detail": db_doc.detail,
+                    "created_at": db_doc.created_at,
+                    "updated_at": db_doc.updated_at,
+                }
+        if doc is None:
+            return None
+        intel = self.intelligence.get(document_id, {})
+        return {
+            "document_id": doc.document_id,
+            "filename": doc.filename,
+            "status": doc.status,
+            "ocr_status": intel.get("ocr_status"),
+            "ocr_page_count": doc.page_count,
+            "ocr_metadata": intel.get("ocr_metadata"),
+            "classification_category": intel.get("classification_category"),
+            "classification_confidence": intel.get("classification_confidence"),
+            "classification_reasoning": intel.get("classification_reasoning"),
+            "classification_manually_corrected": intel.get("classification_manually_corrected", False),
+            "extracted_tables": intel.get("extracted_tables", []),
+            "near_duplicates": intel.get("near_duplicates", []),
+            "page_count": doc.page_count,
+            "extracted_characters": doc.extracted_characters,
+            "chunk_count": doc.chunk_count,
+            "warnings": list(doc.warnings),
+            "detail": doc.detail,
+            "created_at": self.created_at.get(document_id),
+            "updated_at": self.created_at.get(document_id),
+        }
+
+    def reprocess_document_chunks(
+        self,
+        document_id: str,
+        owner_id: str,
+        response: IngestResponse,
+        embeddings: list[list[float]],
+        intelligence: dict[str, Any] | None = None,
+    ) -> IngestResponse | None:
+        self.ensure_ready()
+        if owner_id is not None and self.owners.get(document_id) != owner_id:
+            return None
+        self.by_id[document_id] = response
+        if intelligence:
+            self.intelligence[document_id] = dict(intelligence)
+        return response
 
 class FakeRetrievalStore:
     """In-memory retrieval store for service/API unit tests."""

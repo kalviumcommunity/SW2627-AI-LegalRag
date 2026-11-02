@@ -2,14 +2,46 @@
  * TypeScript definitions strictly aligned with FastAPI Pydantic schemas.
  */
 
-export type SourceType = 'pdf' | 'txt' | 'markdown';
-export type IngestionStatus = 'processed' | 'ocr_required' | 'failed';
+export type SourceType = 'pdf' | 'txt' | 'markdown' | 'image' | 'png' | 'jpg' | 'jpeg';
+export type IngestionStatus =
+  | 'processed'
+  | 'ocr_required'
+  | 'pending_ocr'
+  | 'processing_ocr'
+  | 'ocr_completed'
+  | 'ocr_failed'
+  | 'needs_manual_review'
+  | 'failed';
 export type EvidenceStatus =
   | 'supported'
   | 'insufficient_evidence'
   | 'conflicting_evidence'
   | 'no_relevant_sources';
 export type RetrievalMode = 'semantic' | 'hybrid';
+
+export type DocumentClassificationCategory =
+  | 'Sale Deed'
+  | 'Title Deed'
+  | 'Allotment Letter'
+  | 'Agreement to Sell'
+  | 'Encumbrance Certificate'
+  | 'Occupancy Certificate'
+  | 'Completion Certificate'
+  | 'Building Plan Approval'
+  | 'RERA Registration'
+  | 'Property Tax Receipt'
+  | 'Payment Receipt'
+  | 'Loan or Mortgage Document'
+  | 'Legal Notice'
+  | 'Litigation Document'
+  | 'Other / Unknown';
+
+export type DocumentOcrStatus =
+  | 'pending_ocr'
+  | 'processing_ocr'
+  | 'ocr_completed'
+  | 'ocr_failed'
+  | 'needs_manual_review';
 
 export interface DocumentChunk {
   chunk_id: string;
@@ -414,4 +446,70 @@ export interface PropertyRiskAssessmentStatusResponse {
   high_count: number;
   is_stale: boolean;
   last_assessed_at?: string | null;
+}
+
+export interface DocumentClassificationResponse {
+  document_id: string;
+  category: DocumentClassificationCategory;
+  confidence: number;
+  reasoning: string;
+  manually_corrected: boolean;
+  updated_at: string;
+}
+
+export interface DocumentClassificationUpdateRequest {
+  category: DocumentClassificationCategory;
+}
+
+export interface ExtractedTable {
+  table_id: string;
+  title: string;
+  headers: string[];
+  rows: string[][];
+  page_number?: number | null;
+  category?: string | null;
+  raw_markdown?: string | null;
+}
+
+export interface ExtractedTablesResponse {
+  document_id: string;
+  table_count: number;
+  tables: ExtractedTable[];
+}
+
+export interface DuplicateMatch {
+  document_id: string;
+  filename: string;
+  match_type: 'exact' | 'near_duplicate';
+  similarity: number;
+  reasons: string[];
+  created_at?: string | null;
+}
+
+export interface DocumentDuplicatesResponse {
+  document_id: string;
+  has_duplicates: boolean;
+  exact_matches: DuplicateMatch[];
+  near_matches: DuplicateMatch[];
+}
+
+export interface DocumentProcessingStatusResponse {
+  document_id: string;
+  filename: string;
+  status: IngestionStatus;
+  ocr_status?: DocumentOcrStatus | null;
+  ocr_page_count?: number | null;
+  page_count?: number | null;
+  extracted_characters: number;
+  chunk_count: number;
+  classification_category?: DocumentClassificationCategory | null;
+  classification_confidence?: number | null;
+  classification_reasoning?: string | null;
+  classification_manually_corrected?: boolean;
+  has_duplicates: boolean;
+  table_count: number;
+  warnings: string[];
+  detail?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }

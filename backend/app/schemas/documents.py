@@ -5,8 +5,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-SourceType = Literal["pdf", "txt", "markdown"]
-IngestionStatus = Literal["processed", "ocr_required", "failed"]
+SourceType = Literal["pdf", "txt", "markdown", "image"]
+IngestionStatus = Literal[
+    "processed",
+    "ocr_required",
+    "pending_ocr",
+    "processing_ocr",
+    "ocr_completed",
+    "ocr_failed",
+    "needs_manual_review",
+    "failed",
+]
 
 
 class DocumentChunk(BaseModel):
