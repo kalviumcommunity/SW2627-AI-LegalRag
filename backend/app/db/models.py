@@ -280,7 +280,7 @@ class Document(Base):
             name="uq_documents_owner_content_filename",
         ),
         CheckConstraint(
-            "status IN ('processed', 'ocr_required')",
+            "status IN ('processed', 'ocr_required', 'pending_ocr', 'processing_ocr', 'ocr_completed', 'ocr_failed', 'needs_manual_review', 'failed')",
             name="ck_documents_status",
         ),
         CheckConstraint("chunk_count >= 0", name="ck_documents_chunk_count"),
@@ -305,13 +305,32 @@ class Document(Base):
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     extracted_characters: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Phase 13 Advanced Document Intelligence
+    classification_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    classification_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classification_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    classification_manually_corrected: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sql_text("false"), nullable=True
+    )
+    ocr_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ocr_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ocr_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    extracted_tables: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True, default=list, server_default=sql_text("'[]'")
+    )
+    near_duplicates: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True, default=list, server_default=sql_text("'[]'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

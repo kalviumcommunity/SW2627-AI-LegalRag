@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # runtime. The defaults approximate 800 tokens / 120 tokens of overlap for
     # English text at roughly four characters per token.
     document_max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
-    document_allowed_extensions: str = Field(default="pdf,txt,md")
+    document_allowed_extensions: str = Field(default="pdf,txt,md,png,jpg,jpeg")
     document_chunk_size_chars: int = Field(default=3200, gt=0)
     document_chunk_overlap_chars: int = Field(default=480, ge=0)
     document_chunk_min_split_ratio: float = Field(default=0.5, gt=0, le=1)

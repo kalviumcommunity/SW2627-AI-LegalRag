@@ -849,7 +849,11 @@ class PropertyRiskAssessmentService:
         findings = []
 
         # 1. Scanned Documents Requiring OCR
-        ocr_docs = [d for d in documents if d.status == "ocr_required"]
+        ocr_docs = [
+            d for d in documents
+            if d.status in ("ocr_required", "ocr_failed", "needs_manual_review")
+            or getattr(d, "ocr_status", None) in ("ocr_failed", "needs_manual_review")
+        ]
         if ocr_docs:
             findings.append({
                 "rule_key": "scanned_ocr_required_docs",

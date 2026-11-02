@@ -25,6 +25,9 @@ _ALLOWED_MIME_TYPES: dict[str, frozenset[str]] = {
     ".pdf": frozenset({"application/pdf", "application/x-pdf"}),
     ".txt": frozenset({"text/plain"}),
     ".md": frozenset({"text/markdown", "text/x-markdown", "text/plain"}),
+    ".png": frozenset({"image/png", "image/x-png"}),
+    ".jpg": frozenset({"image/jpeg", "image/jpg", "image/pjpeg"}),
+    ".jpeg": frozenset({"image/jpeg", "image/jpg", "image/pjpeg"}),
 }
 _GENERIC_MIME_TYPES = frozenset(
     {"", "application/octet-stream", "binary/octet-stream"}
@@ -101,6 +104,16 @@ def _validate_signature(extension: str, data: bytes) -> None:
             )
         return
 
+    if extension == ".png":
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise DocumentValidationError("The uploaded file is not a valid PNG image.")
+        return
+
+    if extension in {".jpg", ".jpeg"}:
+        if not data.startswith(b"\xff\xd8\xff"):
+            raise DocumentValidationError("The uploaded file is not a valid JPEG image.")
+        return
+
     # TXT/Markdown: reject binary-looking payloads, while allowing BOM-marked
     # UTF-16/UTF-32 where NUL bytes are part of the encoding.
     if data.startswith(
@@ -140,7 +153,7 @@ def validate_upload(
     extension = PurePosixPath(safe_filename).suffix.lower()
     if not extension:
         raise UnsupportedDocumentTypeError(
-            "The file has no extension. Supported formats: PDF, TXT, Markdown."
+            "The file has no extension. Supported formats: PDF, TXT, Markdown, PNG, JPEG."
         )
 
     configured = settings.allowed_document_extensions

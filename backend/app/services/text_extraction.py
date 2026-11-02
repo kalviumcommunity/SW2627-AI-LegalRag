@@ -1,8 +1,7 @@
 """Modular text extraction for the supported document formats.
 
-Each extractor returns pages (PDF) or one page-less unit (TXT/Markdown) and
-keeps failures explicit. Adding DOCX later only requires a new extractor and a
-registry entry; the rest of the ingestion pipeline stays unchanged.
+Each extractor returns pages (PDF, Image) or one page-less unit (TXT/Markdown) and
+keeps failures explicit.
 """
 
 from __future__ import annotations
@@ -19,6 +18,8 @@ from app.services.ingestion_errors import (
     DocumentValidationError,
     EncryptedDocumentError,
 )
+from app.services.ocr_service import OcrService
+
 
 @dataclass(frozen=True)
 class ExtractedPage:
@@ -112,7 +113,10 @@ class PdfExtractor:
     source_type = "pdf"
     extensions = (".pdf",)
 
-    def extract(self, path: Path) -> ExtractionResult:
+    def __init__(self, ocr_service: OcrService | None = None) -> None:
+        self.ocr_service = ocr_service or OcrService()
+
+    def extract(self, path: Path, perform_ocr_if_needed: bool = False) -> ExtractionResult:
         try:
             reader = PdfReader(str(path), strict=False)
         except Exception as exc:
@@ -161,6 +165,21 @@ class PdfExtractor:
             )
 
         requires_ocr = not any(page.text.strip() for page in pages)
+
+        # If OCR is explicitly requested or enabled for scanned PDFs
+        if requires_ocr and perform_ocr_if_needed:
+            try:
+                ocr_result = self.ocr_service.process_scanned_pdf(path)
+                if ocr_result.total_characters > 0:
+                    pages = [
+                        ExtractedPage(page_number=p.page_number, text=p.text)
+                        for p in ocr_result.pages
+                    ]
+                    requires_ocr = False
+                    warnings.extend(ocr_result.warnings)
+            except Exception as ocr_exc:
+                warnings.append(f"Automatic OCR attempt failed: {ocr_exc}")
+
         if requires_ocr:
             warnings.append(
                 "No extractable text was found. The PDF may be scanned and "
@@ -176,10 +195,38 @@ class PdfExtractor:
         )
 
 
+class ImageExtractor:
+    """Extracts text from standalone image documents (PNG, JPEG) via OCR."""
+
+    source_type = "image"
+    extensions = (".png", ".jpg", ".jpeg")
+
+    def __init__(self, ocr_service: OcrService | None = None) -> None:
+        self.ocr_service = ocr_service or OcrService()
+
+    def extract(self, path: Path) -> ExtractionResult:
+        data = path.read_bytes()
+        res = self.ocr_service.process_image_data(data, page_number=1)
+        text = res.text
+        requires_ocr = not bool(text.strip())
+        warnings = list(res.warnings)
+        if requires_ocr and "No extractable text was found in image." not in warnings:
+            warnings.append("No extractable text was found in image.")
+
+        return ExtractionResult(
+            pages=[ExtractedPage(page_number=1, text=text)],
+            source_type=self.source_type,
+            warnings=warnings,
+            requires_ocr=requires_ocr,
+            page_count=1,
+        )
+
+
 _EXTRACTORS: tuple[DocumentExtractor, ...] = (
     PdfExtractor(),
     PlainTextExtractor(),
     MarkdownExtractor(),
+    ImageExtractor(),
 )
 
 _EXTRACTOR_BY_EXTENSION: dict[str, DocumentExtractor] = {

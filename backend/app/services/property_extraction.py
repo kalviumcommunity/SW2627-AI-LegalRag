@@ -383,6 +383,15 @@ class PropertyExtractionService:
         combined_text = "\n\n".join(
             f"[Page {c.page_number or 1}] {c.text}" for c in chunks[:30]
         )
+        if getattr(doc, "extracted_tables", None):
+            table_strings = []
+            for t in doc.extracted_tables:
+                hdr = " | ".join(t.get("headers", []))
+                rows = [" | ".join(r) for r in t.get("rows", [])]
+                table_strings.append(f"Table ({t.get('title', 'Schedule')} Page {t.get('page_number', 1)}):\n{hdr}\n" + "\n".join(rows))
+            if table_strings:
+                combined_text += "\n\nExtracted Tables:\n" + "\n\n".join(table_strings)
+
         if not combined_text.strip():
             combined_text = f"Document filename: {doc.filename}\nStatus: {doc.status}"
 
