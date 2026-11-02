@@ -31,9 +31,12 @@ export const documentsApi = {
   /**
    * Upload, chunk, embed, and persist a property document.
    */
-  async ingest(file: File): Promise<IngestResponse> {
+  async ingest(file: File, propertyId?: string): Promise<IngestResponse> {
     const formData = new FormData();
     formData.append('file', file);
+    if (propertyId) {
+      formData.append('property_id', propertyId);
+    }
     return apiClient<IngestResponse>('/documents/ingest', {
       method: 'POST',
       body: formData,

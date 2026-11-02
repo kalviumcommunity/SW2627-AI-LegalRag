@@ -11,7 +11,15 @@ import {
   CheckSquare,
   FileSearch,
   History,
+  FolderOpen,
+  Upload,
+  Link2,
+  Unlink,
+  ExternalLink,
 } from 'lucide-react';
+import { StatusBadge, SourceTypeBadge } from '../components/common/Badge';
+import { UploadZone } from '../components/dashboard/UploadZone';
+import { documentsApi } from '../api/documents';
 import { Card } from '../components/common/Card';
 import { Modal } from '../components/common/Modal';
 import { PropertyExtractionDashboard } from '../components/property/PropertyExtractionDashboard';
@@ -28,6 +36,7 @@ import type {
   PropertyExtractionResponse,
   PropertyRiskAssessmentResponse,
   RiskFindingStatus,
+  DocumentSummary,
 } from '../api/types';
 
 interface PropertiesPageProps {
@@ -35,7 +44,7 @@ interface PropertiesPageProps {
   selectedPropertyId?: string;
 }
 
-type TabType = 'risk' | 'extraction' | 'checklist' | 'evidence' | 'activity';
+type TabType = 'risk' | 'extraction' | 'checklist' | 'evidence' | 'activity' | 'documents';
 
 export const PropertiesPage: React.FC<PropertiesPageProps> = ({
   onNavigate: _onNavigate,
@@ -56,6 +65,16 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
 
   // PDF Export State
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+
+  // Property Documents State
+  const [propertyDocs, setPropertyDocs] = useState<DocumentSummary[]>([]);
+  const [loadingPropertyDocs, setLoadingPropertyDocs] = useState<boolean>(false);
+  const [isPropertyUploadOpen, setIsPropertyUploadOpen] = useState<boolean>(false);
+  const [isAttachExistingOpen, setIsAttachExistingOpen] = useState<boolean>(false);
+  const [availableDocsToAttach, setAvailableDocsToAttach] = useState<DocumentSummary[]>([]);
+  const [loadingAvailableDocs, setLoadingAvailableDocs] = useState<boolean>(false);
+  const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
+  const [disassociatingDocId, setDisassociatingDocId] = useState<string | null>(null);
 
   const [loadingList, setLoadingList] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -96,6 +115,77 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
     fetchProperties();
   }, [fetchProperties, isAuthenticated]);
 
+  // Load documents for active property
+  const fetchPropertyDocs = useCallback(async (propertyId: string) => {
+    try {
+      setLoadingPropertyDocs(true);
+      const res = await propertiesApi.getDocuments(propertyId, 1, 100);
+      setPropertyDocs(res.items || []);
+    } catch (err: unknown) {
+      console.warn('Failed to fetch property documents:', err);
+      setPropertyDocs([]);
+    } finally {
+      setLoadingPropertyDocs(false);
+    }
+  }, []);
+
+  // Associate an existing document from library
+  const handleAssociateDocument = async (documentId: string) => {
+    if (!activeProperty) return;
+    try {
+      setAttachingDocId(documentId);
+      await propertiesApi.associateDocument(activeProperty.id, documentId);
+      showSuccess('Document associated with property successfully.');
+      setIsAttachExistingOpen(false);
+      await fetchPropertyDocs(activeProperty.id);
+      await fetchExtraction(activeProperty.id);
+      await fetchRiskAssessment(activeProperty.id);
+      await fetchProperties();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Association failed';
+      showError(msg);
+    } finally {
+      setAttachingDocId(null);
+    }
+  };
+
+  // Disassociate document
+  const handleDisassociateDocument = async (documentId: string) => {
+    if (!activeProperty) return;
+    try {
+      setDisassociatingDocId(documentId);
+      await propertiesApi.disassociateDocument(activeProperty.id, documentId);
+      showSuccess('Document disassociated from property.');
+      await fetchPropertyDocs(activeProperty.id);
+      await fetchExtraction(activeProperty.id);
+      await fetchRiskAssessment(activeProperty.id);
+      await fetchProperties();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Disassociation failed';
+      showError(msg);
+    } finally {
+      setDisassociatingDocId(null);
+    }
+  };
+
+  // Open modal to attach existing unassociated documents
+  const handleOpenAttachModal = async () => {
+    if (!activeProperty) return;
+    setIsAttachExistingOpen(true);
+    try {
+      setLoadingAvailableDocs(true);
+      const res = await documentsApi.list({ page: 1, page_size: 100 });
+      const currentIds = new Set(propertyDocs.map((d) => d.document_id));
+      const unattached = (res.items || []).filter((d) => !currentIds.has(d.document_id));
+      setAvailableDocsToAttach(unattached);
+    } catch (err: unknown) {
+      console.warn('Failed to load available documents:', err);
+      setAvailableDocsToAttach([]);
+    } finally {
+      setLoadingAvailableDocs(false);
+    }
+  };
+
   // Load extraction for active property
   const fetchExtraction = useCallback(async (propertyId: string) => {
     try {
@@ -126,13 +216,15 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
 
   useEffect(() => {
     if (activeProperty) {
+      fetchPropertyDocs(activeProperty.id);
       fetchExtraction(activeProperty.id);
       fetchRiskAssessment(activeProperty.id);
     } else {
+      setPropertyDocs([]);
       setExtraction(null);
       setRiskAssessment(null);
     }
-  }, [activeProperty, fetchExtraction, fetchRiskAssessment]);
+  }, [activeProperty, fetchPropertyDocs, fetchExtraction, fetchRiskAssessment]);
 
   // Extraction handlers
   const handleTriggerExtract = async () => {
@@ -603,6 +695,41 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 Evidence Explorer
               </button>
 
+              {/* Tab 0: Documents */}
+              <button
+                onClick={() => setActiveTab('documents')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 1.1rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  borderRadius: '6px 6px 0 0',
+                  border: 'none',
+                  borderBottom: activeTab === 'documents' ? '3px solid #0284C7' : '3px solid transparent',
+                  backgroundColor: activeTab === 'documents' ? '#F0F9FF' : 'transparent',
+                  color: activeTab === 'documents' ? '#0369A1' : '#64748B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <FolderOpen size={16} color={activeTab === 'documents' ? '#0284C7' : '#94A3B8'} />
+                Documents
+                <span
+                  style={{
+                    backgroundColor: activeTab === 'documents' ? '#0284C7' : '#E2E8F0',
+                    color: activeTab === 'documents' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.6875rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.1rem 0.5rem',
+                  }}
+                >
+                  {propertyDocs.length}
+                </span>
+              </button>
+
               {/* Tab 5: Activity History */}
               <button
                 onClick={() => setActiveTab('activity')}
@@ -666,6 +793,142 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
                 extraction={extraction}
                 loading={loadingExtraction}
               />
+            )}
+
+            {activeTab === 'documents' && (
+              <Card>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#0F172A', margin: 0 }}>
+                        Associated Property Documents
+                      </h3>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#E0F2FE', color: '#0369A1', padding: '0.15rem 0.5rem', borderRadius: '9999px' }}>
+                        {propertyDocs.length}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', color: '#64748B', margin: '0.25rem 0 0 0' }}>
+                      Title deeds, allotment letters, payment receipts, and legal notices associated with this property for diligence analysis.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={handleOpenAttachModal}
+                      className="btn-outline"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.85rem', fontSize: '0.8125rem' }}
+                    >
+                      <Link2 size={15} />
+                      <span>Attach from Library</span>
+                    </button>
+                    <button
+                      onClick={() => setIsPropertyUploadOpen(true)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.85rem', fontSize: '0.8125rem', backgroundColor: '#7C3AED', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      <Upload size={15} />
+                      <span>Upload Document</span>
+                    </button>
+                  </div>
+                </div>
+
+                {loadingPropertyDocs ? (
+                  <div style={{ padding: '2.5rem', textAlign: 'center', color: '#64748B' }}>
+                    <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 0.5rem auto', color: '#7C3AED' }} />
+                    Loading associated documents...
+                  </div>
+                ) : propertyDocs.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3rem 1.5rem', border: '1px dashed #CBD5E1', borderRadius: '12px' }}>
+                    <FileText size={40} color="#94A3B8" style={{ margin: '0 auto 0.75rem auto' }} />
+                    <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+                      No documents associated with this property yet
+                    </h4>
+                    <p style={{ fontSize: '0.8125rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem auto' }}>
+                      Attach uploaded deeds, allotment letters, receipts, or upload new files directly to enable structured facts extraction and evidence-backed risk assessment.
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem' }}>
+                      <button
+                        onClick={handleOpenAttachModal}
+                        className="btn-outline"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.85rem', fontSize: '0.8125rem' }}
+                      >
+                        <Link2 size={15} />
+                        <span>Attach Existing Document</span>
+                      </button>
+                      <button
+                        onClick={() => setIsPropertyUploadOpen(true)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.85rem', fontSize: '0.8125rem', backgroundColor: '#7C3AED', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                      >
+                        <Upload size={15} />
+                        <span>Upload Document</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#FAF8F5', borderBottom: '1px solid #F0EDE6', color: '#6B7280', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                          <th style={{ padding: '0.75rem 1rem' }}>Document</th>
+                          <th style={{ padding: '0.75rem 0.75rem' }}>Type</th>
+                          <th style={{ padding: '0.75rem 0.75rem' }}>Status</th>
+                          <th style={{ padding: '0.75rem 0.75rem' }}>Extracted Chars</th>
+                          <th style={{ padding: '0.75rem 0.75rem' }}>Chunks</th>
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {propertyDocs.map((doc) => (
+                          <tr key={doc.document_id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                            <td style={{ padding: '0.85rem 1rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <FileText size={16} color="#7C3AED" />
+                                <div>
+                                  <span style={{ fontWeight: 600, color: '#1E293B', display: 'block' }}>{doc.filename}</span>
+                                  <span style={{ fontSize: '0.6875rem', color: '#94A3B8' }}>{doc.document_id}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '0.85rem 0.75rem' }}>
+                              <SourceTypeBadge type={doc.source_type} />
+                            </td>
+                            <td style={{ padding: '0.85rem 0.75rem' }}>
+                              <StatusBadge status={doc.status} />
+                            </td>
+                            <td style={{ padding: '0.85rem 0.75rem', color: '#475569' }}>
+                              {doc.extracted_characters.toLocaleString()}
+                            </td>
+                            <td style={{ padding: '0.85rem 0.75rem', color: '#475569' }}>
+                              {doc.chunk_count}
+                            </td>
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                <button
+                                  onClick={() => _onNavigate('doc-detail', { docId: doc.document_id })}
+                                  title="Inspect Document"
+                                  className="btn-outline"
+                                  style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                                >
+                                  <ExternalLink size={13} />
+                                  <span>Inspect</span>
+                                </button>
+                                <button
+                                  onClick={() => handleDisassociateDocument(doc.document_id)}
+                                  disabled={disassociatingDocId === doc.document_id}
+                                  title="Disassociate from property"
+                                  style={{ padding: '0.35rem 0.6rem', border: '1px solid #FCA5A5', borderRadius: '4px', backgroundColor: '#FEF2F2', color: '#DC2626', cursor: disassociatingDocId === doc.document_id ? 'not-allowed' : 'pointer', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontWeight: 600 }}
+                                >
+                                  <Unlink size={13} />
+                                  <span>{disassociatingDocId === doc.document_id ? 'Unlinking...' : 'Disassociate'}</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
             )}
 
             {activeTab === 'activity' && (
@@ -773,6 +1036,106 @@ export const PropertiesPage: React.FC<PropertiesPageProps> = ({
           </div>
         </form>
       </Modal>
+
+      {/* Upload Document to this Property Modal */}
+      {activeProperty && (
+        <Modal
+          isOpen={isPropertyUploadOpen}
+          onClose={() => setIsPropertyUploadOpen(false)}
+          title={`Upload Document to ${activeProperty.name}`}
+          subtitle="Ingest and automatically associate document with this property for due diligence analysis."
+          maxWidth="700px"
+        >
+          <UploadZone
+            propertyId={activeProperty.id}
+            onUploadSuccess={async () => {
+              setIsPropertyUploadOpen(false);
+              await fetchPropertyDocs(activeProperty.id);
+              await fetchExtraction(activeProperty.id);
+              await fetchRiskAssessment(activeProperty.id);
+              await fetchProperties();
+            }}
+          />
+        </Modal>
+      )}
+
+      {/* Attach Existing Document Modal */}
+      {activeProperty && (
+        <Modal
+          isOpen={isAttachExistingOpen}
+          onClose={() => setIsAttachExistingOpen(false)}
+          title={`Attach Document to ${activeProperty.name}`}
+          subtitle="Select an already uploaded document from your library to associate with this property."
+          maxWidth="650px"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {loadingAvailableDocs ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B' }}>
+                <RefreshCw size={20} className="animate-spin" style={{ margin: '0 auto 0.5rem auto', color: '#7C3AED' }} />
+                Loading your documents...
+              </div>
+            ) : availableDocsToAttach.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B' }}>
+                <p style={{ margin: 0 }}>All your uploaded documents are already associated with this property.</p>
+                <button
+                  onClick={() => {
+                    setIsAttachExistingOpen(false);
+                    setIsPropertyUploadOpen(true);
+                  }}
+                  style={{ marginTop: '1rem', padding: '0.5rem 1rem', backgroundColor: '#7C3AED', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8125rem' }}
+                >
+                  Upload a New Document
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '400px', overflowY: 'auto' }}>
+                {availableDocsToAttach.map((doc) => (
+                  <div
+                    key={doc.document_id}
+                    style={{
+                      padding: '0.75rem 1rem',
+                      borderRadius: '8px',
+                      border: '1px solid #E2E8F0',
+                      backgroundColor: '#F8FAFC',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '1rem',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <FileText size={16} color="#7C3AED" />
+                        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#1E293B' }}>{doc.filename}</span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '0.2rem' }}>
+                        {doc.source_type.toUpperCase()} &bull; {doc.chunk_count} chunk(s) &bull; Status: {doc.status}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleAssociateDocument(doc.document_id)}
+                      disabled={attachingDocId === doc.document_id}
+                      style={{
+                        padding: '0.4rem 0.85rem',
+                        backgroundColor: '#7C3AED',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: attachingDocId === doc.document_id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {attachingDocId === doc.document_id ? 'Attaching...' : 'Attach'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

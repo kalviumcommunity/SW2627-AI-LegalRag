@@ -1,6 +1,7 @@
 """Centralized application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, model_validator
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
     """Runtime configuration. Secrets are only read from the environment."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(Path(__file__).resolve().parent.parent.parent / ".env"), ".env", "backend/.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
