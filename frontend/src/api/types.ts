@@ -351,6 +351,13 @@ export interface PropertyItem {
   id: string;
   name: string;
   address?: string | null;
+  property_type?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  area?: number | null;
+  area_unit?: string | null;
+  document_count?: number;
   owner_id: string;
   created_at: string;
   updated_at: string;
@@ -512,4 +519,42 @@ export interface DocumentProcessingStatusResponse {
   detail?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+
+export interface PortfolioAttentionItem {
+  property_id: string;
+  property_name: string;
+  reasons: string[];
+  critical_count: number;
+  high_count: number;
+  has_failed_ocr: boolean;
+  is_assessment_stale: boolean;
+}
+
+export interface PortfolioStatsResponse {
+  total_properties: number;
+  total_documents: number;
+  processed_documents: number;
+  ocr_or_review_documents: number;
+  pending_assessment_properties: number;
+  critical_findings_count: number;
+  high_findings_count: number;
+  open_findings_count: number;
+  resolved_findings_count: number;
+  properties_requiring_attention: PortfolioAttentionItem[];
+}
+
+export interface PropertyActivityEvent {
+  event_id: string;
+  event_type: string;
+  title: string;
+  description: string;
+  timestamp: string;
+  metadata: Record<string, any>;
+}
+
+export interface PropertyActivityResponse {
+  property_id: string;
+  events: PropertyActivityEvent[];
 }

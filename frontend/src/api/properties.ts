@@ -1,9 +1,11 @@
-import { apiClient } from './client';
+import { apiClient, getApiBaseUrl, getAuthToken } from './client';
 import type {
   PropertyItem,
   PropertyListResponse,
   PropertyExtractionResponse,
   PropertyExtractionStatusResponse,
+  PortfolioStatsResponse,
+  PropertyActivityResponse,
 } from './types';
 
 export const propertiesApi = {
@@ -84,5 +86,60 @@ export const propertiesApi = {
       }
     );
   },
-};
 
+  /**
+   * Retrieve portfolio-level statistics across all owned properties.
+   */
+  async getPortfolioStats(): Promise<PortfolioStatsResponse> {
+    return apiClient<PortfolioStatsResponse>('/properties/portfolio/stats', {
+      method: 'GET',
+    });
+  },
+
+  /**
+   * Retrieve chronological activity timeline for a property.
+   */
+  async getActivity(propertyId: string): Promise<PropertyActivityResponse> {
+    return apiClient<PropertyActivityResponse>(
+      `/properties/${encodeURIComponent(propertyId)}/activity`,
+      {
+        method: 'GET',
+      }
+    );
+  },
+
+  /**
+   * Download evidence-backed due diligence PDF report.
+   */
+  async downloadReportPdf(propertyId: string, propertyName: string): Promise<void> {
+    const baseUrl = getApiBaseUrl();
+    const url = `${baseUrl}/properties/${encodeURIComponent(propertyId)}/report/pdf`;
+    const token = getAuthToken();
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!response.ok) {
+      let detail = `Failed to download report (HTTP ${response.status})`;
+      try {
+        const json = await response.json();
+        if (json.detail) detail = json.detail;
+      } catch {
+        // use default
+      }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    const sanitizedName = propertyName.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    a.download = `due_diligence_report_${sanitizedName}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+  },
+};

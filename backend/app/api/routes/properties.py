@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
@@ -24,6 +24,12 @@ from app.schemas.property_extraction import (
     PropertyExtractionResponse,
     PropertyExtractionStatusResponse,
 )
+from app.schemas.portfolio_and_reporting import (
+    PortfolioStatsResponse,
+    PropertyActivityResponse,
+)
+from app.services.portfolio_service import PortfolioService
+from app.services.due_diligence_report_service import DueDiligenceReportService
 from app.schemas.property_risk import (
     PropertyRiskAssessmentResponse,
     PropertyRiskAssessmentStatusResponse,
@@ -70,6 +76,18 @@ def get_risk_assessment_service(
     settings: Settings = Depends(get_settings_dep),
 ) -> PropertyRiskAssessmentService:
     return PropertyRiskAssessmentService(settings=settings)
+
+
+def get_portfolio_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> PortfolioService:
+    return PortfolioService(settings=settings)
+
+
+def get_report_service(
+    settings: Settings = Depends(get_settings_dep),
+) -> DueDiligenceReportService:
+    return DueDiligenceReportService(settings=settings)
 
 
 @router.post(
@@ -121,6 +139,30 @@ async def list_properties(
         return await run_in_threadpool(
             service.list_properties, current_user.id, page=page, page_size=page_size
         )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/portfolio/stats",
+    response_model=PortfolioStatsResponse,
+    summary="Get aggregated portfolio analytics and attention items",
+    responses={
+        200: {"description": "Portfolio statistics calculated from persisted data."},
+        401: {"description": "Authentication required."},
+    },
+)
+async def get_portfolio_stats(
+    current_user: User = Depends(get_current_user),
+    service: PortfolioService = Depends(get_portfolio_service),
+) -> PortfolioStatsResponse:
+    GLOBAL_RATE_LIMITER.check(
+        key=f"portfolio_stats:{current_user.id}",
+        max_requests=60,
+        window_seconds=60,
+    )
+    try:
+        return await run_in_threadpool(service.get_portfolio_stats, current_user.id)
     except PropertyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -560,6 +602,75 @@ async def refresh_property_risk_assessment(
     try:
         return await service.assess_property_risks(
             property_id.strip(), current_user.id, force_refresh=True
+        )
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/activity",
+    response_model=PropertyActivityResponse,
+    summary="Get chronological activity and audit timeline for property",
+    responses={
+        200: {"description": "Activity events history."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Access denied."},
+        404: {"description": "Property not found."},
+    },
+)
+async def get_property_activity(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    service: PortfolioService = Depends(get_portfolio_service),
+) -> PropertyActivityResponse:
+    cleaned_id = property_id.strip()
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_activity:{current_user.id}",
+        max_requests=60,
+        window_seconds=60,
+    )
+    try:
+        return await run_in_threadpool(service.get_activity_history, cleaned_id, current_user.id)
+    except PropertyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get(
+    "/{property_id}/report/pdf",
+    summary="Download evidence-backed due diligence PDF report",
+    responses={
+        200: {
+            "content": {"application/pdf": {}},
+            "description": "Due diligence PDF report document.",
+        },
+        401: {"description": "Authentication required."},
+        403: {"description": "Access forbidden: you do not own this property."},
+        404: {"description": "Property not found."},
+    },
+)
+async def download_due_diligence_report_pdf(
+    property_id: str = Path(..., min_length=1, max_length=64, description="Property identifier."),
+    current_user: User = Depends(get_current_user),
+    report_service: DueDiligenceReportService = Depends(get_report_service),
+) -> Response:
+    cleaned_id = property_id.strip()
+    GLOBAL_RATE_LIMITER.check(
+        key=f"property_pdf:{current_user.id}",
+        max_requests=20,
+        window_seconds=60,
+    )
+    try:
+        pdf_bytes = await run_in_threadpool(
+            report_service.generate_pdf_report, cleaned_id, current_user.id
+        )
+        safe_filename = f"Due_Diligence_Report_{cleaned_id}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_filename}"',
+                "Content-Type": "application/pdf",
+            },
         )
     except PropertyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
